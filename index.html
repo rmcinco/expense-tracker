@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Expense Tracker</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -65,34 +66,35 @@ td:last-child{text-align:right;font-weight:500}
 .save-btn:hover{opacity:.85}
 .save-btn:active{transform:scale(.97)}
 .save-btn.saving{opacity:.6;cursor:default}
+@keyframes spin{to{transform:rotate(360deg)}}
 </style>
 </head>
 <body>
 
 <header>
   <h1>Expense Tracker</h1>
-  <p>Upload your Credit Card SOA &middot; Categorize &middot; Explore</p>
+  <p>Upload your bank statement (PDF, Excel, CSV) &middot; Categorize &middot; Explore</p>
 </header>
 
 <div class="upload-zone" id="upload-zone">
   <svg width="48" height="48" fill="none" stroke="#f5c842" stroke-width="1.5" viewBox="0 0 24 24">
     <path d="M12 16V4m0 0-4 4m4-4 4 4M4 20h16"/>
   </svg>
-  <strong>Drop your Excel file here</strong>
-  <p>or click to browse &middot; .xlsx / .xls / .csv</p>
-  <input type="file" id="file-input" accept=".xlsx,.xls,.csv">
+  <strong>Drop your bank statement here</strong>
+  <p>or click to browse &middot; PDF &middot; Excel &middot; CSV</p>
+  <input type="file" id="file-input" accept=".pdf,.xlsx,.xls,.csv">
 </div>
 
 <div class="format-hint">
-  <strong>Expected column order:</strong>
-  <code>Date | Merchant | Amount | Category (optional)</code>
+  <strong>PDF:</strong> Digital credit card statements are auto-parsed. Password-protected PDFs supported.<br>
+  <strong>Excel/CSV:</strong> Expected columns: <code>Date | Merchant | Amount | Category (optional)</code>
 </div>
 
 <div class="dashboard" id="dashboard">
   <div class="summary-grid card">
-    <div class="stat"><div class="label">Total Spent</div><div class="value" id="s-total">—</div></div>
-    <div class="stat"><div class="label">Transactions</div><div class="value" id="s-count">—</div></div>
-    <div class="stat"><div class="label">Categories</div><div class="value" id="s-cats">—</div></div>
+    <div class="stat"><div class="label">Total Spent</div><div class="value" id="s-total">&#8212;</div></div>
+    <div class="stat"><div class="label">Transactions</div><div class="value" id="s-count">&#8212;</div></div>
+    <div class="stat"><div class="label">Categories</div><div class="value" id="s-cats">&#8212;</div></div>
   </div>
   <div class="card">
     <h2>Spending Breakdown</h2>
@@ -126,570 +128,721 @@ td:last-child{text-align:right;font-weight:500}
 </div>
 
 <script>
-// ── PALETTE ──────────────────────────────────────────────────────────────────
+// Disable PDF.js separate worker thread — runs on main thread instead.
+// This eliminates the "fake worker" warning and works for local + hosted files.
+if (typeof pdfjsLib !== 'undefined') {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = '';
+}
+
 var PALETTE = ['#f5c842','#e8695a','#5ab4e8','#7ae89a','#c87ae8','#e8a75a','#5ae8d4','#e85aa0','#a0e85a','#e87a5a'];
 
-// ── CATEGORY RULES ───────────────────────────────────────────────────────────
 var RULES = [
-  // Food & Dining
   ['jollibee','Food & Dining'],['mcdonald','Food & Dining'],['mcdo','Food & Dining'],
   ['burger king','Food & Dining'],['kfc','Food & Dining'],['chowking','Food & Dining'],
   ['greenwich','Food & Dining'],['pizza hut','Food & Dining'],['shakeys','Food & Dining'],
-  ['mang inasal','Food & Dining'],["max's",'Food & Dining'],['yellow cab','Food & Dining'],
+  ['mang inasal','Food & Dining'],['yellow cab','Food & Dining'],
   ['starbucks','Food & Dining'],['coffee bean','Food & Dining'],['dunkin','Food & Dining'],
   ['subway','Food & Dining'],['wendy','Food & Dining'],['taco bell','Food & Dining'],
   ['restaurant','Food & Dining'],['eatery','Food & Dining'],['canteen','Food & Dining'],
   ['carinderia','Food & Dining'],['bakery','Food & Dining'],['cafe','Food & Dining'],
   ['coffee','Food & Dining'],['milk tea','Food & Dining'],['chatime','Food & Dining'],
-  ['gong cha','Food & Dining'],['foodpanda','Food & Dining'],['food panda','Food & Dining'],['grabfood','Food & Dining'],['grab food','Food & Dining'],
-  ['grab food','Food & Dining'],['dining','Food & Dining'],['snack','Food & Dining'],
-  // Groceries
+  ['gong cha','Food & Dining'],['foodpanda','Food & Dining'],['food panda','Food & Dining'],
+  ['grabfood','Food & Dining'],['grab food','Food & Dining'],['dining','Food & Dining'],
   ['sm supermarket','Groceries'],['robinsons supermarket','Groceries'],['puregold','Groceries'],
   ['savemore','Groceries'],['waltermart','Groceries'],['landmark','Groceries'],
   ['rustan','Groceries'],['hypermarket','Groceries'],['supermarket','Groceries'],
-  ['grocery','Groceries'],['palengke','Groceries'],['wet market','Groceries'],
-  // Fuel & Gas
+  ['grocery','Groceries'],['palengke','Groceries'],
   ['petron','Fuel & Gas'],['shell','Fuel & Gas'],['caltex','Fuel & Gas'],
   ['phoenix fuel','Fuel & Gas'],['seaoil','Fuel & Gas'],['flying v','Fuel & Gas'],
-  ['gasoline','Fuel & Gas'],['gas station','Fuel & Gas'],['fuel','Fuel & Gas'],
-  ['petrol','Fuel & Gas'],['diesel','Fuel & Gas'],
-  // Car Expenses
+  ['gasoline','Fuel & Gas'],['gas station','Fuel & Gas'],['diesel','Fuel & Gas'],
   ['casa','Car Expenses'],['auto service','Car Expenses'],['auto repair','Car Expenses'],
   ['auto parts','Car Expenses'],['car care','Car Expenses'],['car wash','Car Expenses'],
-  ['car detailing','Car Expenses'],['detailing','Car Expenses'],['vulcanizing','Car Expenses'],
-  ['tire','Car Expenses'],['wheel','Car Expenses'],['battery','Car Expenses'],
-  ['brake','Car Expenses'],['oil change','Car Expenses'],['engine oil','Car Expenses'],
-  ['castrol','Car Expenses'],['motul','Car Expenses'],['shell helix','Car Expenses'],
+  ['vulcanizing','Car Expenses'],['tire','Car Expenses'],['brake','Car Expenses'],
+  ['oil change','Car Expenses'],['castrol','Car Expenses'],['motul','Car Expenses'],
   ['car insurance','Car Expenses'],['ctpl','Car Expenses'],['vehicle registration','Car Expenses'],
   ['goodyear','Car Expenses'],['bridgestone','Car Expenses'],['michelin','Car Expenses'],
-  ['pirelli','Car Expenses'],['toyota','Car Expenses'],['honda','Car Expenses'],
-  ['mitsubishi','Car Expenses'],['nissan','Car Expenses'],['ford','Car Expenses'],
-  ['hyundai','Car Expenses'],['kia','Car Expenses'],['suzuki','Car Expenses'],
-  ['isuzu','Car Expenses'],['mechanic','Car Expenses'],['auto shop','Car Expenses'],
-  ['spare part','Car Expenses'],['aircon regas','Car Expenses'],['radiator','Car Expenses'],
-  // Transport
-  ['grab','Transport'],['uber','Transport'],['angkas','Transport'],['move it','Transport'],
-  ['beep','Transport'],['mrt','Transport'],['lrt','Transport'],['bus','Transport'],
-  ['taxi','Transport'],['toll','Transport'],['easytrip','Transport'],
-  ['rfid','Transport'],['parking','Transport'],
-  // Online Shopping
-  ['shopee','Online Shopping'],['lazada','Online Shopping'],['zalora','Online Shopping'],
-  ['tiktok shop','Online Shopping'],['tiktokshop','Online Shopping'],['amazon','Online Shopping'],
-  ['alibaba','Online Shopping'],['aliexpress','Online Shopping'],['ebay','Online Shopping'],
-  ['shein','Online Shopping'],['temu','Online Shopping'],
-  // Retail Shopping
-  ['sm store','Retail Shopping'],['sm dept','Retail Shopping'],['robinsons dept','Retail Shopping'],
-  ['dept store','Retail Shopping'],['department store','Retail Shopping'],['abenson','Retail Shopping'],
-  ['mall','Retail Shopping'],['boutique','Retail Shopping'],['ukay','Retail Shopping'],
-  ['clothing','Retail Shopping'],['apparel','Retail Shopping'],['shoes','Retail Shopping'],
-  ['uniqlo','Retail Shopping'],['h&m','Retail Shopping'],['zara','Retail Shopping'],
-  ['bench','Retail Shopping'],['penshoppe','Retail Shopping'],['watsons','Retail Shopping'],
-  ['mercury drug','Retail Shopping'],['rose pharmacy','Retail Shopping'],['generika','Retail Shopping'],
-  // Hardware & Home
+  ['toyota','Car Expenses'],['honda','Car Expenses'],['mitsubishi','Car Expenses'],
+  ['nissan','Car Expenses'],['hyundai','Car Expenses'],['mechanic','Car Expenses'],
   ['mr diy','Hardware & Home'],['mr. diy','Hardware & Home'],
   ['wilcon','Hardware & Home'],['ace hardware','Hardware & Home'],['true value','Hardware & Home'],
   ['handyman','Hardware & Home'],['hardware','Hardware & Home'],['lumber','Hardware & Home'],
-  ['paint','Hardware & Home'],['home depot','Hardware & Home'],['construction','Hardware & Home'],
   ['furniture','Hardware & Home'],['ikea','Hardware & Home'],['mandaue foam','Hardware & Home'],
-  // Mobile & Telco
+  ['grab','Transport'],['uber','Transport'],['angkas','Transport'],
+  ['mrt','Transport'],['lrt','Transport'],['bus','Transport'],['taxi','Transport'],
+  ['toll','Transport'],['easytrip','Transport'],['rfid','Transport'],['parking','Transport'],
+  ['shopee','Online Shopping'],['lazada','Online Shopping'],['zalora','Online Shopping'],
+  ['tiktok shop','Online Shopping'],['amazon','Online Shopping'],['shein','Online Shopping'],['temu','Online Shopping'],
+  ['sm store','Retail Shopping'],['sm dept','Retail Shopping'],['abenson','Retail Shopping'],
+  ['department store','Retail Shopping'],['clothing','Retail Shopping'],['apparel','Retail Shopping'],
+  ['uniqlo','Retail Shopping'],['zara','Retail Shopping'],['bench','Retail Shopping'],
+  ['penshoppe','Retail Shopping'],['watsons','Retail Shopping'],
+  ['mercury drug','Retail Shopping'],['rose pharmacy','Retail Shopping'],['generika','Retail Shopping'],
   ['globe','Mobile & Telco'],['smart','Mobile & Telco'],['dito','Mobile & Telco'],
-  ['sun cellular','Mobile & Telco'],['pldt','Mobile & Telco'],['converge','Mobile & Telco'],
-  ['sky cable','Mobile & Telco'],['gcash load','Mobile & Telco'],['maya load','Mobile & Telco'],
-  ['e-load','Mobile & Telco'],['eload','Mobile & Telco'],['load','Mobile & Telco'],
-  ['prepaid','Mobile & Telco'],['postpaid','Mobile & Telco'],['pocket wifi','Mobile & Telco'],
-  // Utilities
+  ['pldt','Mobile & Telco'],['converge','Mobile & Telco'],['sky cable','Mobile & Telco'],
+  ['load','Mobile & Telco'],['prepaid','Mobile & Telco'],['pocket wifi','Mobile & Telco'],
   ['meralco','Utilities'],['maynilad','Utilities'],['manila water','Utilities'],
-  ['electric','Utilities'],['electricity','Utilities'],['water bill','Utilities'],
-  ['utility','Utilities'],['lpg','Utilities'],['internet bill','Utilities'],
-  ['broadband','Utilities'],['wifi bill','Utilities'],
-  // Subscriptions
+  ['electric','Utilities'],['water bill','Utilities'],['lpg','Utilities'],
+  ['internet bill','Utilities'],['broadband','Utilities'],
   ['netflix','Subscriptions'],['spotify','Subscriptions'],['youtube premium','Subscriptions'],
   ['disney+','Subscriptions'],['disney plus','Subscriptions'],['hbo','Subscriptions'],
-  ['apple music','Subscriptions'],['apple tv','Subscriptions'],['icloud','Subscriptions'],
-  ['google one','Subscriptions'],['adobe','Subscriptions'],['canva','Subscriptions'],
-  ['microsoft 365','Subscriptions'],['office 365','Subscriptions'],['dropbox','Subscriptions'],
-  ['subscription','Subscriptions'],['membership','Subscriptions'],
-  // Health & Medical
+  ['apple music','Subscriptions'],['icloud','Subscriptions'],['google one','Subscriptions'],
+  ['adobe','Subscriptions'],['canva','Subscriptions'],['microsoft 365','Subscriptions'],
+  ['dropbox','Subscriptions'],['subscription','Subscriptions'],['membership','Subscriptions'],
   ['hospital','Health & Medical'],['clinic','Health & Medical'],['medical center','Health & Medical'],
-  ['doctor','Health & Medical'],['dental','Health & Medical'],['dentist','Health & Medical'],
-  ['optical','Health & Medical'],['pharmacy','Health & Medical'],['drugstore','Health & Medical'],
-  ['laboratory','Health & Medical'],['xray','Health & Medical'],['x-ray','Health & Medical'],
-  ['ultrasound','Health & Medical'],['medicard','Health & Medical'],['philhealth','Health & Medical'],
-  ['medicine','Health & Medical'],['vitamin','Health & Medical'],['supplement','Health & Medical'],
-  // Fitness
-  ['gym','Fitness'],['anytime fitness','Fitness'],["gold's gym",'Fitness'],
-  ['fitness','Fitness'],['yoga','Fitness'],['pilates','Fitness'],['crossfit','Fitness'],
-  // Education
+  ['dental','Health & Medical'],['optical','Health & Medical'],['pharmacy','Health & Medical'],
+  ['laboratory','Health & Medical'],['medicard','Health & Medical'],['philhealth','Health & Medical'],
+  ['medicine','Health & Medical'],['vitamin','Health & Medical'],
+  ['gym','Fitness'],['anytime fitness','Fitness'],['fitness','Fitness'],
+  ['yoga','Fitness'],['pilates','Fitness'],['crossfit','Fitness'],
   ['tuition','Education'],['school','Education'],['university','Education'],
-  ['college','Education'],['udemy','Education'],['coursera','Education'],
-  ['bookstore','Education'],['national bookstore','Education'],['fully booked','Education'],
-  ['training','Education'],['seminar','Education'],
-  // Entertainment
+  ['udemy','Education'],['coursera','Education'],['bookstore','Education'],
+  ['national bookstore','Education'],['fully booked','Education'],['seminar','Education'],
   ['cinema','Entertainment'],['movie','Entertainment'],['concert','Entertainment'],
-  ['karaoke','Entertainment'],['arcade','Entertainment'],['bowling','Entertainment'],
-  ['game','Entertainment'],['steam','Entertainment'],['playstation','Entertainment'],
-  ['xbox','Entertainment'],['nintendo','Entertainment'],
-  // Travel
-  ['cebu pacific','Travel'],['philippine airlines','Travel'],['air asia','Travel'],
-  ['airasia','Travel'],['airline','Travel'],['airport','Travel'],['hotel','Travel'],
-  ['resort','Travel'],['airbnb','Travel'],['booking.com','Travel'],['agoda','Travel'],
-  ['travel','Travel'],['tour','Travel'],['ferry','Travel'],
-  // Banking & Finance
+  ['karaoke','Entertainment'],['arcade','Entertainment'],['game','Entertainment'],['steam','Entertainment'],
+  ['cebu pacific','Travel'],['philippine airlines','Travel'],['airasia','Travel'],
+  ['air asia','Travel'],['airline','Travel'],['airport','Travel'],['hotel','Travel'],
+  ['resort','Travel'],['airbnb','Travel'],['booking.com','Travel'],['agoda','Travel'],['ferry','Travel'],
   ['service charge','Banking & Finance'],['interest charge','Banking & Finance'],
-  ['bank fee','Banking & Finance'],['transfer fee','Banking & Finance'],
-  ['remittance','Banking & Finance'],['western union','Banking & Finance'],
-  ['palawan','Banking & Finance'],['insurance','Banking & Finance'],
-  ['gcash','Banking & Finance'],['maya','Banking & Finance'],['paypal','Banking & Finance'],
-  ['investment','Banking & Finance'],['crypto','Banking & Finance'],
-  // Personal Care
+  ['bank fee','Banking & Finance'],['remittance','Banking & Finance'],
+  ['western union','Banking & Finance'],['palawan','Banking & Finance'],
+  ['insurance','Banking & Finance'],['gcash','Banking & Finance'],
+  ['maya','Banking & Finance'],['paypal','Banking & Finance'],['investment','Banking & Finance'],
   ['salon','Personal Care'],['barbershop','Personal Care'],['haircut','Personal Care'],
   ['spa','Personal Care'],['massage','Personal Care'],['nail','Personal Care'],
-  ['beauty','Personal Care'],['skincare','Personal Care'],['cosmetic','Personal Care'],
-  ['laundry','Personal Care'],
-  // Government & Fees
+  ['beauty','Personal Care'],['skincare','Personal Care'],['laundry','Personal Care'],
   ['nbi','Government & Fees'],['sss','Government & Fees'],['pag-ibig','Government & Fees'],
-  ['pagibig','Government & Fees'],['bir','Government & Fees'],['tax','Government & Fees'],
-  ['permit','Government & Fees'],['passport','Government & Fees'],
-  // Gifts & Donations
+  ['bir','Government & Fees'],['tax','Government & Fees'],['permit','Government & Fees'],['passport','Government & Fees'],
   ['gift','Gifts & Donations'],['donation','Gifts & Donations'],['charity','Gifts & Donations'],
   ['church','Gifts & Donations'],['offering','Gifts & Donations'],['tithe','Gifts & Donations'],
 ];
 
-var ALL_CATS = (function() {
-  var seen = {}, out = [];
-  RULES.forEach(function(r) { if (!seen[r[1]]) { seen[r[1]] = 1; out.push(r[1]); } });
+var ALL_CATS = (function(){
+  var seen={},out=[];
+  RULES.forEach(function(r){if(!seen[r[1]]){seen[r[1]]=1;out.push(r[1]);}});
   return out.sort();
 })();
 
-// ── MERCHANT NORMALIZATION ───────────────────────────────────────────────────
-// Strips branch/location noise so "MR DIY SM North EDSA" → "MR DIY"
-var LOCATION_NOISE = [
-  // PH malls & chains
-  'sm city','sm mall','sm superstore','sm supercenter','sm north edsa','sm southmall',
-  'sm megamall','sm aura','sm fairview','sm bacoor','sm dasmari','sm manila',
-  'robinsons galleria','robinsons place','robinsons metro east','robinsons magnolia',
-  'robinsons manila','robinsons malolos','robinsons antipolo','robinsons novaliches',
-  'ayala malls','ayala center','glorietta','greenbelt','alabang town center','atc',
-  'uptown mall','bgc','bonifacio global city','market market','Venice grand canal',
-  'festival mall','trinoma','vertis north','lucky chinatown','divisoria','ali mall',
-  'gateway mall','cubao','eastwood','libis','ortigas','pasig','mandaluyong','makati',
-  'quezon city','qc','caloocan','pasay','paranaque','las pinas','muntinlupa','taguig',
-  'marikina','antipolo','cavite','laguna','bulacan','batangas','rizal','pampanga',
-  'cebu','davao','iloilo','bacolod','cagayan de oro','general santos',
-  // Generic branch words
-  'branch','store','outlet','kiosk','stall','counter','express','lite','mini',
-  'plus','prime','pro','max','ultra','one','two','three',
-  // Numbers and codes at end
-];
-
-var NOISE_RE = new RegExp(
-  '\\s*[-|#*].*$' +                                          // anything after dash/pipe/hash
-  '|\\s+(branch|br\\.?|store|outlet|kiosk|express|lite|mini|plus|prime|pro|max|ultra)\\b.*$' +
-  '|\\s+(?:' + [
-    'sm city','sm mall','sm superstore','sm north edsa','sm southmall','sm megamall',
-    'sm aura','sm fairview','sm bacoor','sm manila','sm annex',
-    'robinsons galleria','robinsons place','robinsons magnolia','robinsons metro',
-    'ayala malls','ayala center','glorietta','greenbelt','alabang town center',
-    'festival mall','trinoma','vertis north','market! market!','market market',
-    'uptown mall','gateway mall','eastwood','lucky chinatown',
-    'ortigas','bgc','taguig','makati','quezon city','mandaluyong','pasig','marikina',
-    'antipolo','paranaque','las pinas','muntinlupa','cavite','laguna','bulacan',
-    'cebu','davao','iloilo','bacolod'
-  ].join('|') + ')\\b.*$',
-  'i'
-);
-
-function normalizeMerchant(raw) {
-  var n = (raw || '').trim();
-  // Remove anything after dash/pipe followed by a location-like word
-  n = n.replace(/\s*[-|]\s*(sm|robinson|ayala|festival|trinoma|mall|branch|store|outlet|cebu|davao|bgc|ortigas|makati|qc|pasig|taguig|antipolo|cavite|laguna).*/i, '');
-  // Remove trailing branch numbers like "#2", "2", "(2)", "No.2"
-  n = n.replace(/\s*[\(#]?\s*(?:no\.?\s*)?\d+\s*[\)]?\s*$/i, '');
-  // Remove trailing mall/location words
-  n = n.replace(/\s+(?:sm(?:\s+\w+)?|robinsons?\s*\w*|ayala\s*\w*|festival\s*mall|trinoma|greenbelt|glorietta|gateway|eastwood|uptown|market!?\s*market!?|mall|branch|store|outlet|kiosk|express)\s*$/i, '');
-  // Collapse extra spaces
-  n = n.replace(/\s+/g, ' ').trim();
-  return n || raw;
+function normalizeMerchant(raw){
+  var n=(raw||'').trim();
+  n=n.replace(/\s*[-|]\s*(sm|robinson|ayala|festival|trinoma|mall|branch|store|outlet|cebu|davao|bgc|ortigas|makati|qc|pasig|taguig|antipolo|cavite|laguna).*/i,'');
+  n=n.replace(/\s*[#(]?\s*(?:no\.?\s*)?\d+\s*[)]?\s*$/i,'');
+  n=n.replace(/\s+(?:sm(?:\s+\w+)?|robinsons?\s*\w*|ayala\s*\w*|festival\s*mall|trinoma|greenbelt|glorietta|gateway|eastwood|uptown|mall|branch|store|outlet|kiosk|express)\s*$/i,'');
+  return n.replace(/\s+/g,' ').trim()||raw;
 }
 
-function guessCategory(merchant) {
-  // Match against normalized name for better hit rate
-  var m = normalizeMerchant(merchant).toLowerCase();
-  for (var i = 0; i < RULES.length; i++) {
-    if (m.indexOf(RULES[i][0]) !== -1) return RULES[i][1];
-  }
-  // Fallback: try original raw name too
-  var raw = (merchant || '').toLowerCase();
-  if (raw !== m) {
-    for (var j = 0; j < RULES.length; j++) {
-      if (raw.indexOf(RULES[j][0]) !== -1) return RULES[j][1];
-    }
+function guessCategory(merchant){
+  var norm=normalizeMerchant(merchant).toLowerCase();
+  var raw=(merchant||'').toLowerCase();
+  for(var i=0;i<RULES.length;i++){
+    if(norm.indexOf(RULES[i][0])!==-1||raw.indexOf(RULES[i][0])!==-1) return RULES[i][1];
   }
   return null;
 }
 
-// ── STATE ────────────────────────────────────────────────────────────────────
-var parsedData = [];
-var activeSlice = null;
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function fmt(n){return n.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});}
 
-// ── UPLOAD ZONE ──────────────────────────────────────────────────────────────
-var zone = document.getElementById('upload-zone');
-var fileInput = document.getElementById('file-input');
+// DOM helpers - avoids ALL quote escaping issues in modals
+function mkEl(tag,css,txt){
+  var e=document.createElement(tag);
+  if(css) e.style.cssText=css;
+  if(txt!==undefined) e.textContent=txt;
+  return e;
+}
+function ap(parent){
+  for(var i=1;i<arguments.length;i++) parent.appendChild(arguments[i]);
+  return parent;
+}
 
-zone.addEventListener('click', function() { fileInput.click(); });
+var parsedData=[], activeSlice=null;
 
-var dragCounter = 0;
-zone.addEventListener('dragenter', function(e) { e.preventDefault(); dragCounter++; zone.classList.add('dragover'); });
-zone.addEventListener('dragleave', function() { dragCounter--; if (dragCounter <= 0) { dragCounter = 0; zone.classList.remove('dragover'); } });
-zone.addEventListener('dragover', function(e) { e.preventDefault(); });
-zone.addEventListener('drop', function(e) {
-  e.preventDefault(); dragCounter = 0; zone.classList.remove('dragover');
-  if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+// Upload zone
+var zone=document.getElementById('upload-zone');
+var fileInput=document.getElementById('file-input');
+zone.addEventListener('click',function(){fileInput.click();});
+var dragCounter=0;
+zone.addEventListener('dragenter',function(e){e.preventDefault();dragCounter++;zone.classList.add('dragover');});
+zone.addEventListener('dragleave',function(){dragCounter--;if(dragCounter<=0){dragCounter=0;zone.classList.remove('dragover');}});
+zone.addEventListener('dragover',function(e){e.preventDefault();});
+zone.addEventListener('drop',function(e){
+  e.preventDefault();dragCounter=0;zone.classList.remove('dragover');
+  if(e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
 });
-fileInput.addEventListener('change', function() { if (fileInput.files[0]) handleFile(fileInput.files[0]); });
+fileInput.addEventListener('change',function(){if(fileInput.files[0]) handleFile(fileInput.files[0]);});
+document.getElementById('reset-btn').addEventListener('click',function(){location.reload();});
+document.getElementById('save-btn').addEventListener('click',saveView);
+document.getElementById('close-detail').addEventListener('click',clearActive);
 
-document.getElementById('reset-btn').addEventListener('click', function() { location.reload(); });
-document.getElementById('save-btn').addEventListener('click', saveView);
-document.getElementById('close-detail').addEventListener('click', clearActive);
-
-// ── FILE HANDLING ─────────────────────────────────────────────────────────────
-function handleFile(file) {
-  var reader = new FileReader();
-  reader.onload = function(e) {
+// File handling
+function handleFile(file){
+  var ext=file.name.split('.').pop().toLowerCase();
+  if(ext==='pdf'){parsePDF(file);return;}
+  var reader=new FileReader();
+  reader.onload=function(e){
     var rows;
-    if (file.name.slice(-4) === '.csv') {
-      rows = parseCSV(e.target.result);
+    if(ext==='csv'){
+      rows=parseCSV(e.target.result);
     } else {
-      var wb = XLSX.read(e.target.result, { type: 'binary' });
-      var ws = wb.Sheets[wb.SheetNames[0]];
-      rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+      var wb=XLSX.read(e.target.result,{type:'binary'});
+      rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:''});
     }
     buildData(rows);
   };
-  if (file.name.slice(-4) === '.csv') reader.readAsText(file);
-  else reader.readAsBinaryString(file);
+  if(ext==='csv') reader.readAsText(file); else reader.readAsBinaryString(file);
 }
 
-function parseCSV(text) {
-  var lines = text.trim().split('\n');
-  var headers = lines[0].split(',').map(function(h) { return h.trim().replace(/^"|"$/g, ''); });
-  return lines.slice(1).map(function(line) {
-    var vals = line.split(',').map(function(v) { return v.trim().replace(/^"|"$/g, ''); });
-    var obj = {};
-    headers.forEach(function(h, i) { obj[h] = vals[i] || ''; });
+function parseCSV(text){
+  var lines=text.trim().split('\n');
+  var headers=lines[0].split(',').map(function(h){return h.trim().replace(/^"|"$/g,'');});
+  return lines.slice(1).map(function(line){
+    var vals=line.split(',').map(function(v){return v.trim().replace(/^"|"$/g,'');});
+    var obj={};
+    headers.forEach(function(h,i){obj[h]=vals[i]||'';});
     return obj;
   });
 }
 
-function buildData(rows) {
-  if (!rows.length) return;
-  var keys = Object.keys(rows[0]);
-  var dateKey     = keys.find(function(k) { return /date|time/i.test(k); })     || keys[0];
-  var merchantKey = keys.find(function(k) { return /merchant|name|desc|store|vendor/i.test(k); }) || keys[1];
-  var amountKey   = keys.find(function(k) { return /amount|amt|price|total|cost/i.test(k); })     || keys[2];
-  var categoryKey = keys.find(function(k) { return /categ|type|group/i.test(k); }) || null;
+function excelDate(val){
+  if(!val && val !== 0) return '';
+  // If it's already a string with letters, return as-is
+  var s = String(val).trim();
+  if(/[a-zA-Z]/.test(s)) return s;
+  // If it's a pure number, treat as Excel serial date
+  var n = parseFloat(s);
+  if(!isNaN(n) && n > 1000) {
+    // Excel epoch is Dec 30 1899; JS epoch is Jan 1 1970
+    var d = new Date((n - 25569) * 86400 * 1000);
+    var mm = String(d.getUTCMonth()+1).padStart(2,'0');
+    var dd = String(d.getUTCDate()).padStart(2,'0');
+    var yyyy = d.getUTCFullYear();
+    return mm+'/'+dd+'/'+yyyy;
+  }
+  return s;
+}
 
-  parsedData = rows.map(function(row) {
-    var rawMerchant = String(row[merchantKey] || 'Unknown');
-    var normMerchant = normalizeMerchant(rawMerchant);
+function buildData(rows){
+  if(!rows.length) return;
+  var keys=Object.keys(rows[0]);
+  var dKey=keys.find(function(k){return /date|time/i.test(k);})||keys[0];
+  var mKey=keys.find(function(k){return /merchant|name|desc|store|vendor/i.test(k);})||keys[1];
+  var aKey=keys.find(function(k){return /amount|amt|price|total|cost/i.test(k);})||keys[2];
+  var cKey=keys.find(function(k){return /categ|type|group/i.test(k);})||null;
+  parsedData=rows.map(function(row){
+    var rawM=String(row[mKey]||'Unknown');
     return {
-      merchant: normMerchant,       // normalized name used for grouping
-      merchantRaw: rawMerchant,     // original name shown in detail table
-      amount:   parseFloat(String(row[amountKey] || '0').replace(/[^\d.-]/g, '')) || 0,
-      date:     String(row[dateKey] || ''),
-      category: (categoryKey && row[categoryKey]) ? String(row[categoryKey]) : guessCategory(rawMerchant)
+      merchant:normalizeMerchant(rawM),
+      merchantRaw:rawM,
+      amount:parseFloat(String(row[aKey]||'0').replace(/[^\d.-]/g,''))||0,
+      date:excelDate(row[dKey]),
+      category:(cKey&&row[cKey])?String(row[cKey]):guessCategory(rawM)
     };
-  }).filter(function(r) { return r.amount > 0; });
-
-  document.querySelector('.upload-zone').style.display = 'none';
-  document.querySelector('.format-hint').style.display = 'none';
-  document.getElementById('action-row').style.display = 'flex';
-
-  var uncat = parsedData.filter(function(r) { return r.category === null; });
-  if (uncat.length > 0) showUncatModal(uncat);
-  else renderDashboard();
+  }).filter(function(r){return r.amount>0;});
+  afterLoad();
 }
 
-// ── UNCATEGORIZED MODAL ───────────────────────────────────────────────────────
-function showUncatModal(uncat) {
-  var merchantMap = {};
-  uncat.forEach(function(r) { if (!merchantMap[r.merchant]) merchantMap[r.merchant] = 0; merchantMap[r.merchant]++; });
+function afterLoad(){
+  document.querySelector('.upload-zone').style.display='none';
+  document.querySelector('.format-hint').style.display='none';
+  document.getElementById('action-row').style.display='flex';
+  var uncat=parsedData.filter(function(r){return r.category===null;});
+  if(uncat.length>0) showUncatModal(uncat); else renderDashboard();
+}
 
-  var optionsHTML = ALL_CATS.map(function(c) {
-    return '<option value="' + esc(c) + '">' + esc(c) + '</option>';
-  }).join('');
+// PDF
+function parsePDF(file){
+  if(typeof pdfjsLib==='undefined'){alert('PDF.js not loaded.');return;}
+  showLoader('Reading PDF...');
+  var reader=new FileReader();
+  reader.onload=function(e){loadPDF(new Uint8Array(e.target.result),null);};
+  reader.readAsArrayBuffer(file);
+}
 
-  var rowsHTML = Object.keys(merchantMap).map(function(merchant) {
-    var n = merchantMap[merchant];
-    return '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;">'
-      + '<span style="flex:1;font-size:.88rem;color:#e8e8ec;min-width:120px;">' + esc(merchant)
-      + ' <span style="color:#7a7a8a;font-size:.78rem;">(' + n + ' txn' + (n > 1 ? 's' : '') + ')</span></span>'
-      + '<select class="uncat-sel" data-m="' + esc(merchant) + '" style="background:#22222e;border:1px solid #2a2a32;color:#e8e8ec;border-radius:8px;padding:6px 10px;font-size:.82rem;">'
-      + '<option value="">— pick category —</option>' + optionsHTML
-      + '</select></div>';
-  }).join('');
-
-  var modal = document.createElement('div');
-  modal.id = 'uncat-modal';
-  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:999;display:flex;align-items:center;justify-content:center;padding:24px;';
-  modal.innerHTML = '<div style="background:#16161a;border:1px solid #2a2a32;border-radius:16px;padding:32px;max-width:580px;width:100%;max-height:80vh;overflow-y:auto;">'
-    + '<h2 style="font-family:\'Playfair Display\',serif;color:#f5c842;margin-bottom:8px;">Unrecognized Merchants</h2>'
-    + '<p style="color:#7a7a8a;font-size:.88rem;margin-bottom:20px;">' + Object.keys(merchantMap).length + ' merchant(s) couldn\'t be auto-categorized. Assign a category for each:</p>'
-    + '<div>' + rowsHTML + '</div>'
-    + '<div style="display:flex;gap:10px;margin-top:20px;">'
-    + '<button id="uncat-skip" style="flex:1;background:none;border:1px solid #2a2a32;color:#7a7a8a;border-radius:10px;padding:11px;cursor:pointer;font-size:.88rem;">Skip</button>'
-    + '<button id="uncat-apply" style="flex:1;background:#f5c842;border:none;color:#0d0d0f;border-radius:10px;padding:11px;cursor:pointer;font-weight:500;font-size:.88rem;">Apply &amp; Build Chart</button>'
-    + '</div></div>';
-  document.body.appendChild(modal);
-
-  document.getElementById('uncat-apply').onclick = function() {
-    modal.querySelectorAll('.uncat-sel').forEach(function(sel) {
-      var m = sel.dataset.m, cat = sel.value || 'Uncategorized';
-      parsedData.forEach(function(r) { if (r.merchant === m && r.category === null) r.category = cat; });
+function loadPDF(data,password){
+  var params={data:data};
+  if(password) params.password=password;
+  pdfjsLib.getDocument(params).promise.then(function(pdf){
+    var pp=[];
+    for(var i=1;i<=pdf.numPages;i++){
+      pp.push(pdf.getPage(i).then(function(page){
+        return page.getTextContent().then(function(tc){
+          var items=tc.items.slice().sort(function(a,b){
+            var dy=Math.round(b.transform[5])-Math.round(a.transform[5]);
+            return dy!==0?dy:a.transform[4]-b.transform[4];
+          });
+          return items.map(function(it){return it.str;}).join(' ')+'\n';
+        });
+      }));
+    }
+    Promise.all(pp).then(function(pages){
+      hideLoader();
+      var rawText=pages.join('\n');
+      var rows=parsePDFText(rawText);
+      if(rows.length===0) showPDFFailModal(rawText); else showPDFPreview(rows);
     });
-    parsedData.forEach(function(r) { if (!r.category) r.category = 'Uncategorized'; });
-    modal.remove(); renderDashboard();
-  };
-  document.getElementById('uncat-skip').onclick = function() {
-    parsedData.forEach(function(r) { if (!r.category) r.category = 'Uncategorized'; });
-    modal.remove(); renderDashboard();
-  };
-}
-
-function esc(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-// ── DASHBOARD ─────────────────────────────────────────────────────────────────
-function fmt(n) { return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
-
-function renderDashboard() {
-  var total = parsedData.reduce(function(s, r) { return s + r.amount; }, 0);
-  var catMap = {};
-  parsedData.forEach(function(r) { if (!catMap[r.category]) catMap[r.category] = []; catMap[r.category].push(r); });
-  var cats = Object.keys(catMap).map(function(name) {
-    return { name: name, total: catMap[name].reduce(function(s,i){return s+i.amount;},0), items: catMap[name] };
-  }).sort(function(a,b){return b.total-a.total;});
-
-  document.getElementById('s-total').textContent = fmt(total);
-  document.getElementById('s-count').textContent = parsedData.length;
-  document.getElementById('s-cats').textContent  = cats.length;
-  document.getElementById('dashboard').classList.add('visible');
-
-  drawPie(cats, total);
-  drawLegend(cats, total);
-}
-
-function drawPie(cats, total) {
-  var svg = document.getElementById('pie-svg');
-  svg.innerHTML = '';
-  svg._cats = cats;
-  svg._total = total;
-  var a = -Math.PI / 2;
-  cats.forEach(function(cat, i) {
-    var ang = (cat.total / total) * 2 * Math.PI;
-    var ea  = a + ang;
-    var col = PALETTE[i % PALETTE.length];
-    var x1 = Math.cos(a), y1 = Math.sin(a), x2 = Math.cos(ea), y2 = Math.sin(ea);
-    var d = 'M 0 0 L '+x1+' '+y1+' A 1 1 0 '+(ang>Math.PI?1:0)+' 1 '+x2+' '+y2+' Z';
-    var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    path.setAttribute('d', d);
-    path.setAttribute('fill', col);
-    path.setAttribute('class', 'slice');
-    path.setAttribute('data-i', i);
-    path.addEventListener('click', (function(idx){return function(){selectSlice(idx);};})(i));
-    svg.appendChild(path);
-    a = ea;
+  }).catch(function(err){
+    hideLoader();
+    var isPwd=err.name==='PasswordException'||/password/i.test(err.message);
+    if(isPwd) showPwdModal(data,password!==null); else alert('Could not read PDF: '+err.message);
   });
 }
 
-function drawLegend(cats, total) {
-  var leg = document.getElementById('legend');
-  leg.innerHTML = cats.map(function(cat, i) {
-    var col = PALETTE[i % PALETTE.length];
-    var pct = (cat.total / total * 100).toFixed(1);
-    return '<div class="legend-item" data-i="'+i+'" onclick="selectSlice('+i+')">'
-      +'<div class="legend-dot" style="background:'+col+'"></div>'
-      +'<span class="legend-name">'+esc(cat.name)+'</span>'
-      +'<span class="legend-amt">'+fmt(cat.total)+'</span>'
-      +'<span class="legend-pct">'+pct+'%</span>'
-      +'</div>';
-  }).join('');
+function parsePDFText(text){
+  // Multiple date patterns to cover various bank formats
+  var dRe = /\b(\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?|\d{4}[\/\-]\d{2}[\/\-]\d{2}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s*\d{1,2}(?:,?\s*\d{4})?|\d{1,2}\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?(?:\s*\d{2,4})?)\b/i;
+  // Amount: anywhere in line, with or without commas, must have 2 decimal places
+  var aReEnd = /(\d{1,3}(?:,\d{3})*\.\d{2})(?:\s*(?:CR|DR|cr|dr|\+|\-))?\s*$/;
+  var aReAny = /(\d{1,3}(?:,\d{3})*\.\d{2})/g;
+  var skip = /^\s*(page|statement date|account no|account number|previous balance|new balance|payment due|minimum|credit limit|available credit|opening balance|closing balance|total|subtotal|date\s+description|transaction date|posting date|ref|\*|-)\b/i;
+  var rows = [];
+
+  text.split('\n').forEach(function(line){
+    var l = line.trim();
+    if (!l || l.length < 6 || skip.test(l)) return;
+
+    var dm = l.match(dRe);
+    if (!dm) return;
+
+    // Strategy 1: amount at end of line
+    var am = l.match(aReEnd);
+    if (am) {
+      var amount = parseFloat(am[1].replace(/,/g,''));
+      if (!isNaN(amount) && amount > 0) {
+        var merchant = l
+          .slice(l.indexOf(dm[0]) + dm[0].length)
+          .replace(aReEnd, '')
+          .replace(dRe, '')
+          .replace(/\b\d{5,}\b/g, '')
+          .replace(/\s+/g,' ').trim();
+        if (merchant && merchant.length >= 2) {
+          rows.push({ date: dm[0].trim(), merchant: merchant, amount: amount });
+          return;
+        }
+      }
+    }
+
+    // Strategy 2: find all amounts in line, take the last positive one
+    var allAmts = [];
+    var m;
+    var re2 = /(\d{1,3}(?:,\d{3})*\.\d{2})/g;
+    while ((m = re2.exec(l)) !== null) allAmts.push({ val: parseFloat(m[1].replace(/,/g,'')), idx: m.index, str: m[1] });
+    if (!allAmts.length) return;
+    var best = allAmts.filter(function(a){ return a.val > 0; }).pop();
+    if (!best) return;
+    var merchant2 = l
+      .slice(l.indexOf(dm[0]) + dm[0].length, best.idx)
+      .replace(dRe, '')
+      .replace(/\b\d{5,}\b/g, '')
+      .replace(/\s+/g,' ').trim();
+    if (merchant2 && merchant2.length >= 2) {
+      rows.push({ date: dm[0].trim(), merchant: merchant2, amount: best.val });
+    }
+  });
+
+  return rows;
 }
 
-function selectSlice(i) {
-  var svg  = document.getElementById('pie-svg');
-  var cats = svg._cats;
-  var tot  = svg._total;
-  var cat  = cats[i];
-  var col  = PALETTE[i % PALETTE.length];
-  var pct  = (cat.total / tot * 100).toFixed(1);
-  if (activeSlice === i) { clearActive(); return; }
-  activeSlice = i;
+
+// Password modal - all DOM, zero innerHTML with quotes
+function showPwdModal(data,wrongPwd){
+  var ex=document.getElementById('pwd-modal');
+  if(ex) ex.remove();
+
+  var overlay=mkEl('div','position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px;');
+  overlay.id='pwd-modal';
+
+  var box=mkEl('div','background:#16161a;border:1px solid #2a2a32;border-radius:16px;padding:32px;max-width:420px;width:100%;');
+
+  var h2=mkEl('h2','font-family:"Playfair Display",serif;color:#f5c842;margin-bottom:8px;','Password Protected');
+
+  var p=mkEl('p','font-size:.85rem;margin-bottom:16px;');
+  p.style.color=wrongPwd?'#e8695a':'#7a7a8a';
+  p.textContent=wrongPwd?'Incorrect password. Please try again.':'This PDF is password protected. Enter the password to unlock it.';
+
+  var input=mkEl('input','width:100%;background:#22222e;border:1px solid #2a2a32;color:#e8e8ec;border-radius:8px;padding:10px 14px;font-size:.92rem;font-family:"DM Sans",sans-serif;margin-bottom:16px;outline:none;box-sizing:border-box;');
+  input.type='password';
+  input.placeholder='Enter PDF password';
+
+  var row=mkEl('div','display:flex;gap:10px;');
+
+  var cancelBtn=mkEl('button','flex:1;background:none;border:1px solid #2a2a32;color:#7a7a8a;border-radius:10px;padding:11px;cursor:pointer;font-size:.88rem;font-family:"DM Sans",sans-serif;','Cancel');
+  cancelBtn.addEventListener('click',function(){overlay.remove();location.reload();});
+
+  var submitBtn=mkEl('button','flex:2;background:#f5c842;border:none;color:#0d0d0f;border-radius:10px;padding:11px;cursor:pointer;font-weight:500;font-size:.88rem;font-family:"DM Sans",sans-serif;','Unlock & Parse');
+
+  function doSubmit(){
+    var pwd=input.value;
+    if(!pwd) return;
+    overlay.remove();
+    showLoader('Unlocking PDF...');
+    loadPDF(data,pwd);
+  }
+  submitBtn.addEventListener('click',doSubmit);
+  input.addEventListener('keydown',function(e){if(e.key==='Enter') doSubmit();});
+
+  ap(row,cancelBtn,submitBtn);
+  ap(box,h2,p,input,row);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  setTimeout(function(){input.focus();},80);
+}
+
+// PDF preview modal
+function showPDFPreview(rows){
+  var overlay=mkEl('div','position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:999;display:flex;align-items:flex-start;justify-content:center;padding:24px;overflow-y:auto;');
+  overlay.id='pdf-preview';
+  overlay._rows=rows.slice();
+
+  var box=mkEl('div','background:#16161a;border:1px solid #2a2a32;border-radius:16px;padding:32px;max-width:760px;width:100%;margin:auto;');
+
+  var h2=mkEl('h2','font-family:"Playfair Display",serif;color:#f5c842;margin-bottom:8px;','Review Parsed Transactions');
+
+  var p=mkEl('p','color:#7a7a8a;font-size:.85rem;margin-bottom:20px;');
+  var strong=mkEl('strong','color:#e8e8ec;',String(rows.length));
+  p.appendChild(document.createTextNode('Found '));
+  p.appendChild(strong);
+  p.appendChild(document.createTextNode(' transactions. Edit or remove incorrect rows, then click Build Chart.'));
+
+  var scroll=mkEl('div','overflow-x:auto;max-height:55vh;overflow-y:auto;');
+  var table=mkEl('table','width:100%;border-collapse:collapse;');
+  var thead=mkEl('thead');
+  var hrow=mkEl('tr');
+  var thSty='text-align:left;color:#7a7a8a;font-size:.75rem;text-transform:uppercase;letter-spacing:.8px;padding-bottom:10px;border-bottom:1px solid #2a2a32;font-weight:400;padding-right:12px;';
+  ['Date','Merchant','Amount',''].forEach(function(t){ap(hrow,mkEl('th',thSty,t));});
+  thead.appendChild(hrow);
+  var tbody=mkEl('tbody');
+
+  rows.forEach(function(r,i){
+    var tr=mkEl('tr');
+    var tdSty='padding:6px 4px;border-bottom:1px solid #1e1e26;';
+
+    var td1=mkEl('td',tdSty+'color:#7a7a8a;font-size:.82rem;white-space:nowrap;',r.date);
+
+    var td2=mkEl('td',tdSty);
+    var inp1=mkEl('input','background:#22222e;border:1px solid #2a2a32;color:#e8e8ec;border-radius:6px;padding:4px 8px;width:100%;font-size:.82rem;box-sizing:border-box;');
+    inp1.type='text'; inp1.value=r.merchant;
+    inp1.dataset.i=i; inp1.dataset.f='merchant';
+    td2.appendChild(inp1);
+
+    var td3=mkEl('td',tdSty);
+    var inp2=mkEl('input','background:#22222e;border:1px solid #2a2a32;color:#e8e8ec;border-radius:6px;padding:4px 8px;width:80px;font-size:.82rem;');
+    inp2.type='text'; inp2.value=r.amount;
+    inp2.dataset.i=i; inp2.dataset.f='amount';
+    td3.appendChild(inp2);
+
+    var td4=mkEl('td',tdSty);
+    var del=mkEl('button','background:none;border:none;color:#7a7a8a;cursor:pointer;font-size:1rem;padding:0 4px;','\u00d7');
+    del.addEventListener('click',(function(idx,row){return function(){
+      overlay._rows[idx]=null;row.style.opacity='.3';row.style.pointerEvents='none';
+    };})(i,tr));
+    td4.appendChild(del);
+
+    ap(tr,td1,td2,td3,td4);
+    tbody.appendChild(tr);
+  });
+
+  ap(table,thead,tbody);
+  scroll.appendChild(table);
+
+  var btnRow=mkEl('div','display:flex;gap:10px;margin-top:20px;flex-wrap:wrap;');
+  var cancelBtn=mkEl('button','flex:1;background:none;border:1px solid #2a2a32;color:#7a7a8a;border-radius:10px;padding:11px;cursor:pointer;font-size:.88rem;font-family:"DM Sans",sans-serif;','Cancel');
+  cancelBtn.addEventListener('click',function(){overlay.remove();location.reload();});
+
+  var buildBtn=mkEl('button','flex:2;background:#f5c842;border:none;color:#0d0d0f;border-radius:10px;padding:11px;cursor:pointer;font-weight:500;font-size:.88rem;font-family:"DM Sans",sans-serif;','Build Chart \u2192');
+  buildBtn.addEventListener('click',function(){
+    overlay.querySelectorAll('input[data-i]').forEach(function(inp){
+      var idx=parseInt(inp.dataset.i),f=inp.dataset.f;
+      if(overlay._rows[idx]) overlay._rows[idx][f]=inp.value;
+    });
+    var final=overlay._rows.filter(function(r){return r&&parseFloat(r.amount)>0&&r.merchant;});
+    overlay.remove();
+    parsedData=final.map(function(r){
+      var raw=r.merchant.trim();
+      return{merchant:normalizeMerchant(raw),merchantRaw:raw,amount:parseFloat(r.amount),date:r.date,category:guessCategory(raw)};
+    });
+    afterLoad();
+  });
+
+  ap(btnRow,cancelBtn,buildBtn);
+  ap(box,h2,p,scroll,btnRow);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+}
+
+function showPDFFailModal(rawText){
+  var overlay=mkEl('div','position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:999;display:flex;align-items:flex-start;justify-content:center;padding:24px;overflow-y:auto;');
+  var box=mkEl('div','background:#16161a;border:1px solid #2a2a32;border-radius:16px;padding:32px;max-width:680px;width:100%;margin:auto;');
+  var h2=mkEl('h2','font-family:"Playfair Display",serif;color:#f5c842;margin-bottom:8px;','Could Not Auto-Parse PDF');
+  var p=mkEl('p','color:#7a7a8a;font-size:.85rem;margin-bottom:16px;','No transactions were detected automatically. Below is the raw text extracted from your PDF — check if it looks correct, then tap "Try Anyway" to review and manually fix the rows, or close and export as CSV from your bank portal.');
+
+  // Show raw text preview
+  var pre=mkEl('pre','background:#0d0d0f;border:1px solid #2a2a32;border-radius:8px;padding:12px;font-size:.75rem;color:#7a7a8a;max-height:200px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;margin-bottom:16px;');
+  pre.textContent = rawText ? rawText.slice(0,2000)+(rawText.length>2000?'\n... (truncated)':'') : '(no text extracted — PDF may be scanned/image-based)';
+
+  var btnRow=mkEl('div','display:flex;gap:10px;flex-wrap:wrap;');
+  var closeBtn=mkEl('button','flex:1;background:none;border:1px solid #2a2a32;color:#7a7a8a;border-radius:10px;padding:11px;cursor:pointer;font-size:.88rem;font-family:"DM Sans",sans-serif;','Close');
+  closeBtn.addEventListener('click',function(){overlay.remove();location.reload();});
+
+  var tryBtn=mkEl('button','flex:2;background:#f5c842;border:none;color:#0d0d0f;border-radius:10px;padding:11px;cursor:pointer;font-weight:500;font-size:.88rem;font-family:"DM Sans",sans-serif;','Try Anyway →');
+  tryBtn.addEventListener('click',function(){
+    overlay.remove();
+    // Build rows from any line that has an amount, using full line as merchant
+    var fallbackRows=[];
+    (rawText||'').split('\n').forEach(function(line){
+      var l=line.trim();
+      if(!l||l.length<6) return;
+      var amts=l.match(/(\d{1,3}(?:,\d{3})*\.\d{2})/g);
+      if(!amts) return;
+      var amount=parseFloat(amts[amts.length-1].replace(/,/g,''));
+      if(isNaN(amount)||amount<=0) return;
+      fallbackRows.push({date:'',merchant:l.replace(/(\d{1,3}(?:,\d{3})*\.\d{2})/g,'').replace(/\s+/g,' ').trim()||l,amount:amount});
+    });
+    if(fallbackRows.length>0) showPDFPreview(fallbackRows);
+    else alert('Still no amounts detected. This PDF may be image-based.');
+  });
+
+  ap(btnRow,closeBtn,tryBtn);
+  ap(box,h2,p,pre,btnRow);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+}
+
+function showLoader(msg){
+  var el=mkEl('div','position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:9999;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;');
+  el.id='loader';
+  var spinner=mkEl('div','width:40px;height:40px;border:3px solid #2a2a32;border-top-color:#f5c842;border-radius:50%;animation:spin .8s linear infinite;');
+  var lbl=mkEl('p','color:#e8e8ec;font-size:.92rem;',msg||'Loading...');
+  ap(el,spinner,lbl);
+  document.body.appendChild(el);
+}
+function hideLoader(){var el=document.getElementById('loader');if(el)el.remove();}
+
+function showUncatModal(uncat){
+  var mmap={};
+  uncat.forEach(function(r){mmap[r.merchant]=(mmap[r.merchant]||0)+1;});
+
+  var overlay=mkEl('div','position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:999;display:flex;align-items:center;justify-content:center;padding:24px;');
+  var box=mkEl('div','background:#16161a;border:1px solid #2a2a32;border-radius:16px;padding:32px;max-width:580px;width:100%;max-height:80vh;overflow-y:auto;');
+  var h2=mkEl('h2','font-family:"Playfair Display",serif;color:#f5c842;margin-bottom:8px;','Unrecognized Merchants');
+  var p=mkEl('p','color:#7a7a8a;font-size:.88rem;margin-bottom:20px;',Object.keys(mmap).length+' merchant(s) could not be auto-categorized. Assign a category for each:');
+
+  var rowsDiv=mkEl('div');
+  Object.keys(mmap).forEach(function(merchant){
+    var n=mmap[merchant];
+    var row=mkEl('div','display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;');
+    var lbl=mkEl('span','flex:1;font-size:.88rem;color:#e8e8ec;min-width:120px;');
+    lbl.appendChild(document.createTextNode(merchant+' '));
+    lbl.appendChild(mkEl('span','color:#7a7a8a;font-size:.78rem;','('+n+' txn'+(n>1?'s':'')+')')); 
+    var sel=mkEl('select','background:#22222e;border:1px solid #2a2a32;color:#e8e8ec;border-radius:8px;padding:6px 10px;font-family:"DM Sans",sans-serif;font-size:.82rem;');
+    sel.dataset.m=merchant;
+    sel.appendChild(mkEl('option',null,'— pick category —'));
+    sel.options[0].value='';
+    ALL_CATS.forEach(function(c){
+      var opt=mkEl('option',null,c); opt.value=c; sel.appendChild(opt);
+    });
+    ap(row,lbl,sel);
+    rowsDiv.appendChild(row);
+  });
+
+  var btnRow=mkEl('div','display:flex;gap:10px;margin-top:20px;');
+  var skipBtn=mkEl('button','flex:1;background:none;border:1px solid #2a2a32;color:#7a7a8a;border-radius:10px;padding:11px;cursor:pointer;font-size:.88rem;font-family:"DM Sans",sans-serif;','Skip');
+  var applyBtn=mkEl('button','flex:2;background:#f5c842;border:none;color:#0d0d0f;border-radius:10px;padding:11px;cursor:pointer;font-weight:500;font-size:.88rem;font-family:"DM Sans",sans-serif;','Apply & Build Chart');
+
+  skipBtn.addEventListener('click',function(){
+    parsedData.forEach(function(r){if(!r.category) r.category='Uncategorized';});
+    overlay.remove(); renderDashboard();
+  });
+  applyBtn.addEventListener('click',function(){
+    overlay.querySelectorAll('select[data-m]').forEach(function(sel){
+      var m=sel.dataset.m, cat=sel.value||'Uncategorized';
+      parsedData.forEach(function(r){if(r.merchant===m&&!r.category) r.category=cat;});
+    });
+    parsedData.forEach(function(r){if(!r.category) r.category='Uncategorized';});
+    overlay.remove(); renderDashboard();
+  });
+
+  ap(btnRow,skipBtn,applyBtn);
+  ap(box,h2,p,rowsDiv,btnRow);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+}
+
+function renderDashboard(){
+  var total=parsedData.reduce(function(s,r){return s+r.amount;},0);
+  var catMap={};
+  parsedData.forEach(function(r){if(!catMap[r.category]) catMap[r.category]=[];catMap[r.category].push(r);});
+  var cats=Object.keys(catMap).map(function(name){
+    return{name:name,total:catMap[name].reduce(function(s,i){return s+i.amount;},0),items:catMap[name]};
+  }).sort(function(a,b){return b.total-a.total;});
+
+  document.getElementById('s-total').textContent=fmt(total);
+  document.getElementById('s-count').textContent=parsedData.length;
+  document.getElementById('s-cats').textContent=cats.length;
+  document.getElementById('dashboard').classList.add('visible');
+  drawPie(cats,total);
+  drawLegend(cats,total);
+}
+
+function drawPie(cats,total){
+  var svg=document.getElementById('pie-svg');
+  svg.innerHTML=''; svg._cats=cats; svg._total=total;
+  var a=-Math.PI/2;
+  cats.forEach(function(cat,i){
+    var ang=cat.total/total*2*Math.PI, ea=a+ang, col=PALETTE[i%PALETTE.length];
+    var d='M 0 0 L '+Math.cos(a)+' '+Math.sin(a)+' A 1 1 0 '+(ang>Math.PI?1:0)+' 1 '+Math.cos(ea)+' '+Math.sin(ea)+' Z';
+    var path=document.createElementNS('http://www.w3.org/2000/svg','path');
+    path.setAttribute('d',d); path.setAttribute('fill',col); path.setAttribute('class','slice');
+    path.addEventListener('click',(function(idx){return function(){selectSlice(idx);};})(i));
+    svg.appendChild(path); a=ea;
+  });
+}
+
+function drawLegend(cats,total){
+  var leg=document.getElementById('legend'); leg.innerHTML='';
+  cats.forEach(function(cat,i){
+    var col=PALETTE[i%PALETTE.length], pct=(cat.total/total*100).toFixed(1);
+    var item=mkEl('div','');
+    item.className='legend-item';
+    var dot=mkEl('div','background:'+col+';'); dot.className='legend-dot';
+    var name=mkEl('span',''); name.className='legend-name'; name.textContent=cat.name;
+    var amt=mkEl('span',''); amt.className='legend-amt'; amt.textContent=fmt(cat.total);
+    var p=mkEl('span',''); p.className='legend-pct'; p.textContent=pct+'%';
+    ap(item,dot,name,amt,p);
+    item.addEventListener('click',(function(idx){return function(){selectSlice(idx);};})(i));
+    leg.appendChild(item);
+  });
+}
+
+function selectSlice(i){
+  var svg=document.getElementById('pie-svg');
+  var cats=svg._cats, tot=svg._total, cat=cats[i], col=PALETTE[i%PALETTE.length];
+  var pct=(cat.total/tot*100).toFixed(1);
+  if(activeSlice===i){clearActive();return;}
+  activeSlice=i;
   svg.querySelectorAll('.slice').forEach(function(p){p.classList.remove('active');});
   svg.querySelectorAll('.slice')[i].classList.add('active');
   document.querySelectorAll('.legend-item').forEach(function(el){el.classList.remove('active');});
   document.querySelectorAll('.legend-item')[i].classList.add('active');
-  document.getElementById('center-pct').textContent = pct + '%';
-  document.getElementById('center-cat').textContent = cat.name;
+  document.getElementById('center-pct').textContent=pct+'%';
+  document.getElementById('center-cat').textContent=cat.name;
   document.getElementById('detail-panel').classList.add('visible');
-  document.getElementById('detail-title').innerHTML = '<span style="color:'+col+'">&#9679;</span> '+esc(cat.name)+' &mdash; '+fmt(cat.total);
-  document.getElementById('detail-tbody').innerHTML = cat.items.slice().sort(function(a,b){var da=new Date(a.date||0),db=new Date(b.date||0);return db-da||b.amount-a.amount;}).map(function(r){
-    return '<tr><td>'+esc(r.date||'—')+'</td><td>'+esc(r.merchantRaw||r.merchant)+'</td>'
-      +'<td><span class="badge" style="background:'+col+'22;color:'+col+'">'+esc(r.category)+'</span></td>'
-      +'<td>'+fmt(r.amount)+'</td></tr>';
-  }).join('');
+  document.getElementById('detail-title').innerHTML='<span style="color:'+col+'">&#9679;</span> '+esc(cat.name)+' &mdash; '+fmt(cat.total);
+  document.getElementById('detail-tbody').innerHTML=cat.items.slice()
+    .sort(function(a,b){var da=new Date(a.date||0),db=new Date(b.date||0);return db-da||b.amount-a.amount;})
+    .map(function(r){
+      return '<tr><td>'+esc(r.date||'&mdash;')+'</td><td>'+esc(r.merchantRaw||r.merchant)+'</td>'
+        +'<td><span class="badge" style="background:'+col+'22;color:'+col+'">'+esc(r.category)+'</span></td>'
+        +'<td>'+fmt(r.amount)+'</td></tr>';
+    }).join('');
 }
 
-function clearActive() {
-  activeSlice = null;
+function clearActive(){
+  activeSlice=null;
   document.querySelectorAll('.slice').forEach(function(p){p.classList.remove('active');});
   document.querySelectorAll('.legend-item').forEach(function(el){el.classList.remove('active');});
-  document.getElementById('center-pct').textContent = '100%';
-  document.getElementById('center-cat').textContent = 'All categories';
+  document.getElementById('center-pct').textContent='100%';
+  document.getElementById('center-cat').textContent='All categories';
   document.getElementById('detail-panel').classList.remove('visible');
 }
 
-// ── SAVE VIEW ─────────────────────────────────────────────────────────────────
-function saveView() {
-  var btn = document.getElementById('save-btn');
-  btn.textContent = 'Saving...';
-  btn.classList.add('saving');
+function saveView(){
+  var btn=document.getElementById('save-btn');
+  btn.textContent='Saving...'; btn.classList.add('saving');
+  try{
+    var svg=document.getElementById('pie-svg');
+    var cats=svg._cats, tot=svg._total;
+    if(!cats||!tot){alert('No data to save yet.');btn.textContent='\u2b07 Save View';btn.classList.remove('saving');return;}
+    var sTotal=document.getElementById('s-total').textContent;
+    var sCount=document.getElementById('s-count').textContent;
+    var sCats=document.getElementById('s-cats').textContent;
+    var sDate=new Date().toLocaleDateString('en-PH',{year:'numeric',month:'long',day:'numeric'});
 
-  try {
-    var svg  = document.getElementById('pie-svg');
-    var cats = svg._cats;
-    var tot  = svg._total;
-    if (!cats || !tot) { alert('No data to save yet.'); btn.textContent = '\u2b07 Save View'; btn.classList.remove('saving'); return; }
+    var css='*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}'
+      +':root{--bg:#0d0d0f;--surface:#16161a;--border:#2a2a32;--accent:#f5c842;--text:#e8e8ec;--muted:#7a7a8a;--radius:16px}'
+      +'body{background:var(--bg);color:var(--text);font-family:"DM Sans",sans-serif;font-weight:300;min-height:100vh;padding:32px 24px}'
+      +'header{text-align:center;margin-bottom:40px}'
+      +'header h1{font-family:"Playfair Display",serif;font-size:clamp(2rem,5vw,3.5rem);color:var(--accent);letter-spacing:-1px}'
+      +'header p{color:var(--muted);margin-top:8px;font-size:.95rem}'
+      +'.dashboard{display:grid;grid-template-columns:1fr 1fr;max-width:1100px;margin:0 auto;gap:24px}'
+      +'@media(max-width:700px){.dashboard{grid-template-columns:1fr}}'
+      +'.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:28px}'
+      +'.card h2{font-family:"Playfair Display",serif;font-size:1.2rem;margin-bottom:20px;color:var(--accent)}'
+      +'.summary-grid{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,1fr);gap:16px}'
+      +'.stat{background:#1e1e26;border:1px solid var(--border);border-radius:12px;padding:20px}'
+      +'.stat .label{color:var(--muted);font-size:.8rem;text-transform:uppercase;letter-spacing:1px}'
+      +'.stat .value{font-family:"Playfair Display",serif;font-size:1.9rem;color:var(--accent);margin-top:4px}'
+      +'.chart-wrap{position:relative;display:flex;justify-content:center;align-items:center;min-height:280px}'
+      +'#pie-svg{cursor:pointer;overflow:visible}'
+      +'.slice{transition:transform .18s ease,filter .18s ease;transform-origin:center}'
+      +'.slice:hover,.slice.active{filter:brightness(1.25);transform:scale(1.06)}'
+      +'.center-label{position:absolute;text-align:center;pointer-events:none}'
+      +'.center-label .pct{font-family:"Playfair Display",serif;font-size:2rem;color:var(--accent)}'
+      +'.center-label .cat{font-size:.78rem;color:var(--muted);margin-top:2px}'
+      +'.legend{display:flex;flex-direction:column;gap:10px}'
+      +'.legend-item{display:flex;align-items:center;gap:10px;cursor:pointer;padding:8px 10px;border-radius:8px;transition:background .15s}'
+      +'.legend-item:hover,.legend-item.active{background:#22222e}'
+      +'.legend-dot{width:12px;height:12px;border-radius:50%;flex-shrink:0}'
+      +'.legend-name{flex:1;font-size:.88rem}'
+      +'.legend-amt{font-size:.88rem;font-weight:500}'
+      +'.legend-pct{font-size:.78rem;color:var(--muted);margin-left:6px}'
+      +'.detail-panel{grid-column:1/-1;display:none}'
+      +'.detail-panel.visible{display:block}'
+      +'.detail-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}'
+      +'.detail-header h2{font-family:"Playfair Display",serif;font-size:1.3rem;color:var(--accent)}'
+      +'.close-btn{background:none;border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:6px 12px;cursor:pointer;font-size:.82rem}'
+      +'table{width:100%;border-collapse:collapse;font-size:.88rem}'
+      +'th{text-align:left;color:var(--muted);font-weight:400;font-size:.78rem;text-transform:uppercase;padding-bottom:12px;border-bottom:1px solid var(--border)}'
+      +'td{padding:11px 0;border-bottom:1px solid #1e1e26}'
+      +'td:last-child{text-align:right;font-weight:500}'
+      +'.badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:.75rem;font-weight:500}'
+      +'.saved-note{text-align:center;color:var(--muted);font-size:.8rem;margin-top:24px}';
 
-    var sTotal = document.getElementById('s-total').textContent;
-    var sCount = document.getElementById('s-count').textContent;
-    var sCats  = document.getElementById('s-cats').textContent;
-    var sDate  = new Date().toLocaleDateString('en-PH', { year:'numeric', month:'long', day:'numeric' });
+    var js='var P='+JSON.stringify(PALETTE)+',cats='+JSON.stringify(cats)+',tot='+JSON.stringify(tot)+',act=null;'
+      +'function fmt(n){return n.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});}'
+      +'function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}'
+      +'function drawPie(){var svg=document.getElementById("pie-svg");svg.innerHTML="";var a=-Math.PI/2;'
+      +'cats.forEach(function(cat,i){var ang=cat.total/tot*2*Math.PI,ea=a+ang,col=P[i%P.length];'
+      +'var d="M 0 0 L "+Math.cos(a)+" "+Math.sin(a)+" A 1 1 0 "+(ang>Math.PI?1:0)+" 1 "+Math.cos(ea)+" "+Math.sin(ea)+" Z";'
+      +'var p=document.createElementNS("http://www.w3.org/2000/svg","path");'
+      +'p.setAttribute("d",d);p.setAttribute("fill",col);p.setAttribute("class","slice");'
+      +'p.addEventListener("click",(function(idx){return function(){sel(idx);};})(i));svg.appendChild(p);a=ea;});}'
+      +'function drawLeg(){var leg=document.getElementById("legend");leg.innerHTML="";'
+      +'cats.forEach(function(cat,i){var col=P[i%P.length],pct=(cat.total/tot*100).toFixed(1);'
+      +'var item=document.createElement("div");item.className="legend-item";'
+      +'item.innerHTML="<div class=\\"legend-dot\\" style=\\"background:"+col+"\\"></div><span class=\\"legend-name\\">"+esc(cat.name)+"</span><span class=\\"legend-amt\\">"+fmt(cat.total)+"</span><span class=\\"legend-pct\\">"+pct+"%</span>";'
+      +'item.addEventListener("click",(function(idx){return function(){sel(idx);};})(i));leg.appendChild(item);});}'
+      +'function sel(i){var cat=cats[i],col=P[i%P.length],pct=(cat.total/tot*100).toFixed(1);'
+      +'if(act===i){clr();return;}act=i;'
+      +'document.querySelectorAll(".slice").forEach(function(p){p.classList.remove("active");});'
+      +'document.querySelectorAll(".slice")[i].classList.add("active");'
+      +'document.querySelectorAll(".legend-item").forEach(function(e){e.classList.remove("active");});'
+      +'document.querySelectorAll(".legend-item")[i].classList.add("active");'
+      +'document.getElementById("center-pct").textContent=pct+"%";'
+      +'document.getElementById("center-cat").textContent=cat.name;'
+      +'document.getElementById("detail-panel").classList.add("visible");'
+      +'document.getElementById("detail-title").innerHTML="<span style=\\"color:"+col+"\\">&#9679;</span> "+esc(cat.name)+" &mdash; "+fmt(cat.total);'
+      +'document.getElementById("detail-tbody").innerHTML=cat.items.slice()'
+      +'.sort(function(a,b){var da=new Date(a.date||0),db=new Date(b.date||0);return db-da||b.amount-a.amount;})'
+      +'.map(function(r){return "<tr><td>"+esc(r.date||"&mdash;")+"</td><td>"+esc(r.merchantRaw||r.merchant)+"</td>"'
+      +'+"<td><span class=\\"badge\\" style=\\"background:"+col+"22;color:"+col+"\\">"+esc(r.category)+"</span></td>"'
+      +'+"<td>"+fmt(r.amount)+"</td></tr>";}).join("");}'
+      +'function clr(){act=null;document.querySelectorAll(".slice").forEach(function(p){p.classList.remove("active");});'
+      +'document.querySelectorAll(".legend-item").forEach(function(e){e.classList.remove("active");});'
+      +'document.getElementById("center-pct").textContent="100%";document.getElementById("center-cat").textContent="All categories";'
+      +'document.getElementById("detail-panel").classList.remove("visible");}'
+      +'document.getElementById("close-detail").addEventListener("click",clr);drawPie();drawLeg();';
 
-    // Build the inner JS for saved file — safe string building
-    var innerJS = [
-      'var PALETTE='+JSON.stringify(PALETTE)+';',
-      'var cats='+JSON.stringify(cats)+';',
-      'var tot='+JSON.stringify(tot)+';',
-      'var active=null;',
-      'function fmt(n){return n.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});}',
-      'function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}',
-      'function drawPie(){',
-      '  var svg=document.getElementById("pie-svg");svg.innerHTML="";',
-      '  var a=-Math.PI/2;',
-      '  cats.forEach(function(cat,i){',
-      '    var ang=(cat.total/tot)*2*Math.PI,ea=a+ang,col=PALETTE[i%PALETTE.length];',
-      '    var x1=Math.cos(a),y1=Math.sin(a),x2=Math.cos(ea),y2=Math.sin(ea);',
-      '    var d="M 0 0 L "+x1+" "+y1+" A 1 1 0 "+(ang>Math.PI?1:0)+" 1 "+x2+" "+y2+" Z";',
-      '    var p=document.createElementNS("http://www.w3.org/2000/svg","path");',
-      '    p.setAttribute("d",d);p.setAttribute("fill",col);p.setAttribute("class","slice");',
-      '    p.addEventListener("click",(function(idx){return function(){sel(idx);};})(i));',
-      '    svg.appendChild(p);a=ea;',
-      '  });',
-      '}',
-      'function drawLeg(){',
-      '  var leg=document.getElementById("legend");',
-      '  leg.innerHTML=cats.map(function(cat,i){',
-      '    var col=PALETTE[i%PALETTE.length],pct=(cat.total/tot*100).toFixed(1);',
-      '    return "<div class=\\"legend-item\\" onclick=\\"sel("+i+")\\">"',
-      '      +"<div class=\\"legend-dot\\" style=\\"background:"+col+"\\"></div>"',
-      '      +"<span class=\\"legend-name\\">"+esc(cat.name)+"</span>"',
-      '      +"<span class=\\"legend-amt\\">"+fmt(cat.total)+"</span>"',
-      '      +"<span class=\\"legend-pct\\">"+pct+"%</span></div>";',
-      '  }).join("");',
-      '}',
-      'function sel(i){',
-      '  var cat=cats[i],col=PALETTE[i%PALETTE.length],pct=(cat.total/tot*100).toFixed(1);',
-      '  if(active===i){clr();return;}active=i;',
-      '  document.querySelectorAll(".slice").forEach(function(p){p.classList.remove("active");});',
-      '  document.querySelectorAll(".slice")[i].classList.add("active");',
-      '  document.querySelectorAll(".legend-item").forEach(function(el){el.classList.remove("active");});',
-      '  document.querySelectorAll(".legend-item")[i].classList.add("active");',
-      '  document.getElementById("center-pct").textContent=pct+"%";',
-      '  document.getElementById("center-cat").textContent=cat.name;',
-      '  document.getElementById("detail-panel").classList.add("visible");',
-      '  document.getElementById("detail-title").innerHTML="<span style=\\"color:"+col+"\\">&#9679;</span> "+esc(cat.name)+" &mdash; "+fmt(cat.total);',
-      '  document.getElementById("detail-tbody").innerHTML=cat.items.slice().sort(function(a,b){var da=new Date(a.date||0),db=new Date(b.date||0);return db-da||b.amount-a.amount;}).map(function(r){',
-      '    return "<tr><td>"+esc(r.date||"—")+"</td><td>"+esc(r.merchantRaw||r.merchant)+"</td>"',
-      '      +"<td><span class=\\"badge\\" style=\\"background:"+col+"22;color:"+col+"\\">"+esc(r.category)+"</span></td>"',
-      '      +"<td>"+fmt(r.amount)+"</td></tr>";',
-      '  }).join("");',
-      '}',
-      'function clr(){',
-      '  active=null;',
-      '  document.querySelectorAll(".slice").forEach(function(p){p.classList.remove("active");});',
-      '  document.querySelectorAll(".legend-item").forEach(function(el){el.classList.remove("active");});',
-      '  document.getElementById("center-pct").textContent="100%";',
-      '  document.getElementById("center-cat").textContent="All categories";',
-      '  document.getElementById("detail-panel").classList.remove("visible");',
-      '}',
-      'document.getElementById("close-detail").addEventListener("click",clr);',
-      'drawPie();drawLeg();',
-    ].join('\n');
-
-    var css = [
-      '*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}',
-      ':root{--bg:#0d0d0f;--surface:#16161a;--border:#2a2a32;--accent:#f5c842;--text:#e8e8ec;--muted:#7a7a8a;--radius:16px}',
-      'body{background:var(--bg);color:var(--text);font-family:"DM Sans",sans-serif;font-weight:300;min-height:100vh;padding:32px 24px}',
-      'header{text-align:center;margin-bottom:40px}',
-      'header h1{font-family:"Playfair Display",serif;font-size:clamp(2rem,5vw,3.5rem);color:var(--accent);letter-spacing:-1px}',
-      'header p{color:var(--muted);margin-top:8px;font-size:.95rem}',
-      '.dashboard{display:grid;grid-template-columns:1fr 1fr;max-width:1100px;margin:0 auto;gap:24px}',
-      '@media(max-width:700px){.dashboard{grid-template-columns:1fr}}',
-      '.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:28px}',
-      '.card h2{font-family:"Playfair Display",serif;font-size:1.2rem;margin-bottom:20px;color:var(--accent)}',
-      '.summary-grid{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,1fr);gap:16px}',
-      '@media(max-width:700px){.summary-grid{grid-column:1;grid-template-columns:1fr}}',
-      '.stat{background:#1e1e26;border:1px solid var(--border);border-radius:12px;padding:20px}',
-      '.stat .label{color:var(--muted);font-size:.8rem;text-transform:uppercase;letter-spacing:1px}',
-      '.stat .value{font-family:"Playfair Display",serif;font-size:1.9rem;color:var(--accent);margin-top:4px}',
-      '.chart-wrap{position:relative;display:flex;justify-content:center;align-items:center;min-height:280px}',
-      '#pie-svg{cursor:pointer;overflow:visible}',
-      '.slice{transition:transform .18s ease,filter .18s ease;transform-origin:center}',
-      '.slice:hover,.slice.active{filter:brightness(1.25);transform:scale(1.06)}',
-      '.slice.active{filter:brightness(1.4) drop-shadow(0 0 12px rgba(245,200,66,.5))}',
-      '.center-label{position:absolute;text-align:center;pointer-events:none}',
-      '.center-label .pct{font-family:"Playfair Display",serif;font-size:2rem;color:var(--accent)}',
-      '.center-label .cat{font-size:.78rem;color:var(--muted);margin-top:2px}',
-      '.legend{display:flex;flex-direction:column;gap:10px}',
-      '.legend-item{display:flex;align-items:center;gap:10px;cursor:pointer;padding:8px 10px;border-radius:8px;transition:background .15s}',
-      '.legend-item:hover,.legend-item.active{background:#22222e}',
-      '.legend-dot{width:12px;height:12px;border-radius:50%;flex-shrink:0}',
-      '.legend-name{flex:1;font-size:.88rem}',
-      '.legend-amt{font-size:.88rem;font-weight:500}',
-      '.legend-pct{font-size:.78rem;color:var(--muted);margin-left:6px}',
-      '.detail-panel{grid-column:1/-1;display:none}',
-      '.detail-panel.visible{display:block}',
-      '.detail-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}',
-      '.detail-header h2{font-family:"Playfair Display",serif;font-size:1.3rem;color:var(--accent)}',
-      '.close-btn{background:none;border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:6px 12px;cursor:pointer;font-size:.82rem;transition:border-color .15s,color .15s}',
-      '.close-btn:hover{border-color:var(--accent);color:var(--accent)}',
-      'table{width:100%;border-collapse:collapse;font-size:.88rem}',
-      'th{text-align:left;color:var(--muted);font-weight:400;font-size:.78rem;text-transform:uppercase;letter-spacing:.8px;padding-bottom:12px;border-bottom:1px solid var(--border)}',
-      'td{padding:11px 0;border-bottom:1px solid #1e1e26}',
-      'td:last-child{text-align:right;font-weight:500}',
-      '.badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:.75rem;font-weight:500}',
-      '.saved-note{text-align:center;color:var(--muted);font-size:.8rem;margin-top:24px}',
-    ].join('\n');
-
-    var parts = [
-      '<!DOCTYPE html>',
-      '<html lang="en">',
-      '<head>',
-      '<meta charset="UTF-8">',
+    var parts=[
+      '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">',
       '<meta name="viewport" content="width=device-width, initial-scale=1.0">',
-      '<title>Expense Report &mdash; ' + sDate + '</title>',
+      '<title>Expense Report - '+sDate+'</title>',
       '<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">',
-      '<style>' + css + '</style>',
-      '</head>',
-      '<body>',
-      '<header><h1>Expense Report</h1><p>Saved on ' + sDate + '</p></header>',
+      '<style>'+css+'</style></head><body>',
+      '<header><h1>Expense Report</h1><p>Saved on '+sDate+'</p></header>',
       '<div class="dashboard">',
       '<div class="summary-grid card">',
-      '<div class="stat"><div class="label">Total Spent</div><div class="value">' + sTotal + '</div></div>',
-      '<div class="stat"><div class="label">Transactions</div><div class="value">' + sCount + '</div></div>',
-      '<div class="stat"><div class="label">Categories</div><div class="value">' + sCats + '</div></div>',
+      '<div class="stat"><div class="label">Total Spent</div><div class="value">'+sTotal+'</div></div>',
+      '<div class="stat"><div class="label">Transactions</div><div class="value">'+sCount+'</div></div>',
+      '<div class="stat"><div class="label">Categories</div><div class="value">'+sCats+'</div></div>',
       '</div>',
       '<div class="card"><h2>Spending Breakdown</h2><div class="chart-wrap">',
       '<svg id="pie-svg" width="240" height="240" viewBox="-1.2 -1.2 2.4 2.4"></svg>',
@@ -699,35 +852,21 @@ function saveView() {
       '<div class="detail-panel card" id="detail-panel">',
       '<div class="detail-header"><h2 id="detail-title">Category Detail</h2><button class="close-btn" id="close-detail">&#x2715; Close</button></div>',
       '<table><thead><tr><th>Date</th><th>Merchant</th><th>Category</th><th>Amount</th></tr></thead><tbody id="detail-tbody"></tbody></table>',
-      '</div>',
-      '</div>',
-      '<p class="saved-note">Saved from Expense Tracker &middot; ' + sDate + '</p>',
+      '</div></div>',
+      '<p class="saved-note">Saved from Expense Tracker &middot; '+sDate+'</p>',
     ];
+    parts.push('<scr'+'ipt>'+js+'</'+'script>');
+    parts.push('</body></html>');
 
-    // Add script tag safely split
-    parts.push('<scr' + 'ipt>');
-    parts.push(innerJS);
-    parts.push('</' + 'script>');
-    parts.push('</body>', '</html>');
-
-    var html = parts.join('\n');
-    var blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-    var url  = URL.createObjectURL(blob);
-    var a    = document.createElement('a');
-    a.href   = url;
-    var now  = new Date();
-    a.download = 'expense-report-' + now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0') + '.html';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-
-  } catch(err) {
-    alert('Save failed: ' + err.message);
-    console.error(err);
-  }
-
-  setTimeout(function() { btn.textContent = '\u2b07 Save View'; btn.classList.remove('saving'); }, 1200);
+    var blob=new Blob([parts.join('\n')],{type:'text/html;charset=utf-8'});
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');
+    var now=new Date();
+    a.href=url;
+    a.download='expense-report-'+now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0')+'.html';
+    document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);
+  }catch(err){alert('Save failed: '+err.message);console.error(err);}
+  setTimeout(function(){btn.textContent='\u2b07 Save View';btn.classList.remove('saving');},1200);
 }
 </script>
 </body>
