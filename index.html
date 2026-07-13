@@ -66,6 +66,10 @@ td:last-child{text-align:right;font-weight:500}
 .save-btn:hover{opacity:.85}
 .save-btn:active{transform:scale(.97)}
 .save-btn.saving{opacity:.6;cursor:default}
+.add-btn{background:none;border:1px solid var(--border);color:var(--accent);padding:10px 24px;border-radius:8px;cursor:pointer;font-size:.85rem;font-family:'DM Sans',sans-serif;font-weight:500;transition:border-color .15s,background .15s}
+.add-btn:hover{border-color:var(--accent);background:#1e1e24}
+.manual-link{display:block;text-align:center;max-width:560px;margin:0 auto 24px;color:var(--muted);font-size:.85rem;cursor:pointer;text-decoration:underline;text-underline-offset:3px;transition:color .15s}
+.manual-link:hover{color:var(--accent)}
 @keyframes spin{to{transform:rotate(360deg)}}
 </style>
 </head>
@@ -84,6 +88,8 @@ td:last-child{text-align:right;font-weight:500}
   <p>or click to browse &middot; PDF &middot; Excel &middot; CSV</p>
   <input type="file" id="file-input" accept=".pdf,.xlsx,.xls,.csv">
 </div>
+
+<div class="manual-link" id="manual-link">or enter transactions manually &rarr;</div>
 
 <div class="format-hint">
   <strong>PDF:</strong> Digital credit card statements are auto-parsed. Password-protected PDFs supported.<br>
@@ -124,6 +130,7 @@ td:last-child{text-align:right;font-weight:500}
 
 <div class="action-row" id="action-row" style="display:none">
   <button class="reset-btn" id="reset-btn">&#x2191; Upload a different file</button>
+  <button class="add-btn" id="add-entry-btn">&#x2b;  Add Entry</button>
   <button class="save-btn" id="save-btn">&#x2b07; Save View</button>
 </div>
 
@@ -272,6 +279,8 @@ fileInput.addEventListener('change',function(){if(fileInput.files[0]) handleFile
 document.getElementById('reset-btn').addEventListener('click',function(){location.reload();});
 document.getElementById('save-btn').addEventListener('click',saveView);
 document.getElementById('close-detail').addEventListener('click',clearActive);
+document.getElementById('manual-link').addEventListener('click',function(){showManualEntryModal(false);});
+document.getElementById('add-entry-btn').addEventListener('click',function(){showManualEntryModal(true);});
 
 // File handling
 function handleFile(file){
@@ -342,6 +351,7 @@ function buildData(rows){
 
 function afterLoad(){
   document.querySelector('.upload-zone').style.display='none';
+  document.getElementById('manual-link').style.display='none';
   document.querySelector('.format-hint').style.display='none';
   document.getElementById('action-row').style.display='flex';
   var uncat=parsedData.filter(function(r){return r.category===null;});
@@ -616,6 +626,115 @@ function showLoader(msg){
 }
 function hideLoader(){var el=document.getElementById('loader');if(el)el.remove();}
 
+// Manual entry modal — used both for the initial "enter manually" flow (append=false)
+// and for adding more transactions to an already-built dashboard (append=true)
+function showManualEntryModal(append){
+  var overlay=mkEl('div','position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:999;display:flex;align-items:flex-start;justify-content:center;padding:24px;overflow-y:auto;');
+  overlay._rows=[];
+
+  var box=mkEl('div','background:#16161a;border:1px solid #2a2a32;border-radius:16px;padding:32px;max-width:820px;width:100%;margin:auto;');
+
+  var h2=mkEl('h2','font-family:"Playfair Display",serif;color:#f5c842;margin-bottom:8px;',append?'Add Transactions':'Enter Transactions Manually');
+  var p=mkEl('p','color:#7a7a8a;font-size:.85rem;margin-bottom:20px;','Fill in each row. Leave Category blank to auto-detect from the merchant name.');
+
+  var scroll=mkEl('div','overflow-x:auto;max-height:50vh;overflow-y:auto;');
+  var table=mkEl('table','width:100%;border-collapse:collapse;');
+  var thead=mkEl('thead');
+  var hrow=mkEl('tr');
+  var thSty='text-align:left;color:#7a7a8a;font-size:.75rem;text-transform:uppercase;letter-spacing:.8px;padding-bottom:10px;border-bottom:1px solid #2a2a32;font-weight:400;padding-right:12px;';
+  ['Date','Merchant','Amount','Category',''].forEach(function(t){ap(hrow,mkEl('th',thSty,t));});
+  thead.appendChild(hrow);
+  var tbody=mkEl('tbody');
+  table.appendChild(thead);
+  table.appendChild(tbody);
+  scroll.appendChild(table);
+
+  var todayStr=(function(){
+    var d=new Date();
+    return String(d.getMonth()+1).padStart(2,'0')+'/'+String(d.getDate()).padStart(2,'0')+'/'+d.getFullYear();
+  })();
+
+  function addRow(prefill){
+    var tr=mkEl('tr');
+    var tdSty='padding:6px 4px;border-bottom:1px solid #1e1e26;';
+    var inpSty='background:#22222e;border:1px solid #2a2a32;color:#e8e8ec;border-radius:6px;padding:6px 8px;width:100%;font-size:.82rem;box-sizing:border-box;font-family:"DM Sans",sans-serif;';
+
+    var td1=mkEl('td',tdSty);
+    var inpDate=mkEl('input',inpSty+'min-width:110px;');
+    inpDate.type='text'; inpDate.placeholder='MM/DD/YYYY';
+    inpDate.value=(prefill&&prefill.date)||todayStr;
+    td1.appendChild(inpDate);
+
+    var td2=mkEl('td',tdSty);
+    var inpMerchant=mkEl('input',inpSty+'min-width:160px;');
+    inpMerchant.type='text'; inpMerchant.placeholder='e.g. Jollibee';
+    if(prefill&&prefill.merchant) inpMerchant.value=prefill.merchant;
+    td2.appendChild(inpMerchant);
+
+    var td3=mkEl('td',tdSty);
+    var inpAmount=mkEl('input',inpSty+'min-width:90px;');
+    inpAmount.type='text'; inpAmount.placeholder='0.00';
+    if(prefill&&prefill.amount) inpAmount.value=prefill.amount;
+    td3.appendChild(inpAmount);
+
+    var td4=mkEl('td',tdSty);
+    var selCat=mkEl('select',inpSty+'min-width:150px;');
+    selCat.appendChild(mkEl('option',null,'Auto-detect'));
+    selCat.options[0].value='';
+    ALL_CATS.forEach(function(c){var opt=mkEl('option',null,c);opt.value=c;selCat.appendChild(opt);});
+    td4.appendChild(selCat);
+
+    var td5=mkEl('td',tdSty);
+    var del=mkEl('button','background:none;border:none;color:#7a7a8a;cursor:pointer;font-size:1.1rem;padding:0 4px;','\u00d7');
+    del.addEventListener('click',function(){tr.remove();});
+    td5.appendChild(del);
+
+    ap(tr,td1,td2,td3,td4,td5);
+    tbody.appendChild(tr);
+    return inpMerchant;
+  }
+
+  // Start with 3 empty rows for convenience
+  addRow(); addRow(); addRow();
+
+  var addRowBtn=mkEl('button','background:none;border:1px dashed #2a2a32;color:#7a7a8a;border-radius:8px;padding:8px 16px;cursor:pointer;font-size:.82rem;font-family:"DM Sans",sans-serif;margin-top:12px;','+ Add Row');
+  addRowBtn.addEventListener('click',function(){var m=addRow();m.focus();});
+
+  var btnRow=mkEl('div','display:flex;gap:10px;margin-top:20px;flex-wrap:wrap;');
+  var cancelBtn=mkEl('button','flex:1;background:none;border:1px solid #2a2a32;color:#7a7a8a;border-radius:10px;padding:11px;cursor:pointer;font-size:.88rem;font-family:"DM Sans",sans-serif;','Cancel');
+  cancelBtn.addEventListener('click',function(){overlay.remove();});
+
+  var buildBtn=mkEl('button','flex:2;background:#f5c842;border:none;color:#0d0d0f;border-radius:10px;padding:11px;cursor:pointer;font-weight:500;font-size:.88rem;font-family:"DM Sans",sans-serif;',append?'Add to Chart \u2192':'Build Chart \u2192');
+  buildBtn.addEventListener('click',function(){
+    var newRows=[];
+    tbody.querySelectorAll('tr').forEach(function(tr){
+      var inputs=tr.querySelectorAll('input');
+      var sel=tr.querySelector('select');
+      var date=inputs[0].value.trim();
+      var merchant=inputs[1].value.trim();
+      var amount=parseFloat(inputs[2].value.replace(/[^\d.-]/g,''));
+      var cat=sel.value;
+      if(!merchant||isNaN(amount)||amount<=0) return;
+      newRows.push({
+        merchant:normalizeMerchant(merchant),
+        merchantRaw:merchant,
+        amount:amount,
+        date:date,
+        category:cat||guessCategory(merchant)
+      });
+    });
+    if(newRows.length===0){alert('Add at least one valid row (merchant + amount required).');return;}
+    overlay.remove();
+    if(append) parsedData=parsedData.concat(newRows); else parsedData=newRows;
+    afterLoad();
+  });
+
+  ap(btnRow,cancelBtn,buildBtn);
+  ap(box,h2,p,scroll,addRowBtn,btnRow);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+}
+
 function showUncatModal(uncat){
   var mmap={};
   uncat.forEach(function(r){mmap[r.merchant]=(mmap[r.merchant]||0)+1;});
@@ -680,6 +799,7 @@ function renderDashboard(){
   document.getElementById('dashboard').classList.add('visible');
   drawPie(cats,total);
   drawLegend(cats,total);
+  clearActive();
 }
 
 function drawPie(cats,total){
