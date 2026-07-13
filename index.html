@@ -93,12 +93,13 @@ td:last-child{text-align:right;font-weight:500}
 
 <div class="format-hint">
   <strong>PDF:</strong> Digital credit card statements are auto-parsed. Password-protected PDFs supported.<br>
-  <strong>Excel/CSV:</strong> Expected columns: <code>Date | Merchant | Amount | Category (optional)</code>
+  <strong>Excel/CSV:</strong> Expected columns: <code>Date | Merchant | Amount | Category (optional)</code><br>
+  Use negative amounts for payments, credits, or a previous statement balance.
 </div>
 
 <div class="dashboard" id="dashboard">
   <div class="summary-grid card">
-    <div class="stat"><div class="label">Total Spent</div><div class="value" id="s-total">&#8212;</div></div>
+    <div class="stat"><div class="label">Net Total</div><div class="value" id="s-total">&#8212;</div></div>
     <div class="stat"><div class="label">Transactions</div><div class="value" id="s-count">&#8212;</div></div>
     <div class="stat"><div class="label">Categories</div><div class="value" id="s-cats">&#8212;</div></div>
   </div>
@@ -221,6 +222,14 @@ var RULES = [
   ['bir','Government & Fees'],['tax','Government & Fees'],['permit','Government & Fees'],['passport','Government & Fees'],
   ['gift','Gifts & Donations'],['donation','Gifts & Donations'],['charity','Gifts & Donations'],
   ['church','Gifts & Donations'],['offering','Gifts & Donations'],['tithe','Gifts & Donations'],
+  ['previous statement balance','Previous Balance'],['previous balance','Previous Balance'],
+  ['beginning balance','Previous Balance'],['balance forward','Previous Balance'],
+  ['opening balance','Previous Balance'],
+  ['payment - thank','Payments'],['payment thank you','Payments'],['thank you for your payment','Payments'],
+  ['payment received','Payments'],['online payment','Payments'],['bill payment','Payments'],
+  ['auto debit payment','Payments'],['autopay','Payments'],['auto-pay','Payments'],
+  ['loan payment','Payments'],['card payment','Payments'],['less payment','Payments'],
+  ['payment','Payments'],
 ];
 
 var ALL_CATS = (function(){
@@ -345,7 +354,7 @@ function buildData(rows){
       date:excelDate(row[dKey]),
       category:(cKey&&row[cKey])?String(row[cKey]):guessCategory(rawM)
     };
-  }).filter(function(r){return r.amount>0;});
+  }).filter(function(r){return r.amount!==0;});
   afterLoad();
 }
 
@@ -400,9 +409,9 @@ function parsePDFText(text){
   // Multiple date patterns to cover various bank formats
   var dRe = /\b(\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?|\d{4}[\/\-]\d{2}[\/\-]\d{2}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s*\d{1,2}(?:,?\s*\d{4})?|\d{1,2}\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?(?:\s*\d{2,4})?)\b/i;
   // Amount: anywhere in line, with or without commas, must have 2 decimal places
-  var aReEnd = /(\d{1,3}(?:,\d{3})*\.\d{2})(?:\s*(?:CR|DR|cr|dr|\+|\-))?\s*$/;
-  var aReAny = /(\d{1,3}(?:,\d{3})*\.\d{2})/g;
-  var skip = /^\s*(page|statement date|account no|account number|previous balance|new balance|payment due|minimum|credit limit|available credit|opening balance|closing balance|total|subtotal|date\s+description|transaction date|posting date|ref|\*|-)\b/i;
+  var aReEnd = /(-?\d{1,3}(?:,\d{3})*\.\d{2})\s*(CR|DR|cr|dr)?\s*$/;
+  var aReAny = /(-?\d{1,3}(?:,\d{3})*\.\d{2})/g;
+  var skip = /^\s*(page|statement date|account no|account number|new balance|payment due|minimum|credit limit|available credit|closing balance|total|subtotal|date\s+description|transaction date|posting date|ref|\*|-)\b/i;
   var rows = [];
 
   text.split('\n').forEach(function(line){
@@ -416,7 +425,9 @@ function parsePDFText(text){
     var am = l.match(aReEnd);
     if (am) {
       var amount = parseFloat(am[1].replace(/,/g,''));
-      if (!isNaN(amount) && amount > 0) {
+      var isCredit = am[2] && /cr/i.test(am[2]);
+      if (isCredit) amount = -Math.abs(amount);
+      if (!isNaN(amount) && amount !== 0) {
         var merchant = l
           .slice(l.indexOf(dm[0]) + dm[0].length)
           .replace(aReEnd, '')
@@ -430,13 +441,13 @@ function parsePDFText(text){
       }
     }
 
-    // Strategy 2: find all amounts in line, take the last positive one
+    // Strategy 2: find all amounts in line, take the last nonzero one
     var allAmts = [];
     var m;
-    var re2 = /(\d{1,3}(?:,\d{3})*\.\d{2})/g;
+    var re2 = /(-?\d{1,3}(?:,\d{3})*\.\d{2})/g;
     while ((m = re2.exec(l)) !== null) allAmts.push({ val: parseFloat(m[1].replace(/,/g,'')), idx: m.index, str: m[1] });
     if (!allAmts.length) return;
-    var best = allAmts.filter(function(a){ return a.val > 0; }).pop();
+    var best = allAmts.filter(function(a){ return a.val !== 0; }).pop();
     if (!best) return;
     var merchant2 = l
       .slice(l.indexOf(dm[0]) + dm[0].length, best.idx)
@@ -563,7 +574,7 @@ function showPDFPreview(rows){
       var idx=parseInt(inp.dataset.i),f=inp.dataset.f;
       if(overlay._rows[idx]) overlay._rows[idx][f]=inp.value;
     });
-    var final=overlay._rows.filter(function(r){return r&&parseFloat(r.amount)>0&&r.merchant;});
+    var final=overlay._rows.filter(function(r){return r&&parseFloat(r.amount)!==0&&!isNaN(parseFloat(r.amount))&&r.merchant;});
     overlay.remove();
     parsedData=final.map(function(r){
       var raw=r.merchant.trim();
@@ -600,11 +611,11 @@ function showPDFFailModal(rawText){
     (rawText||'').split('\n').forEach(function(line){
       var l=line.trim();
       if(!l||l.length<6) return;
-      var amts=l.match(/(\d{1,3}(?:,\d{3})*\.\d{2})/g);
+      var amts=l.match(/(-?\d{1,3}(?:,\d{3})*\.\d{2})/g);
       if(!amts) return;
       var amount=parseFloat(amts[amts.length-1].replace(/,/g,''));
-      if(isNaN(amount)||amount<=0) return;
-      fallbackRows.push({date:'',merchant:l.replace(/(\d{1,3}(?:,\d{3})*\.\d{2})/g,'').replace(/\s+/g,' ').trim()||l,amount:amount});
+      if(isNaN(amount)||amount===0) return;
+      fallbackRows.push({date:'',merchant:l.replace(/(-?\d{1,3}(?:,\d{3})*\.\d{2})/g,'').replace(/\s+/g,' ').trim()||l,amount:amount});
     });
     if(fallbackRows.length>0) showPDFPreview(fallbackRows);
     else alert('Still no amounts detected. This PDF may be image-based.');
@@ -635,7 +646,7 @@ function showManualEntryModal(append){
   var box=mkEl('div','background:#16161a;border:1px solid #2a2a32;border-radius:16px;padding:32px;max-width:820px;width:100%;margin:auto;');
 
   var h2=mkEl('h2','font-family:"Playfair Display",serif;color:#f5c842;margin-bottom:8px;',append?'Add Transactions':'Enter Transactions Manually');
-  var p=mkEl('p','color:#7a7a8a;font-size:.85rem;margin-bottom:20px;','Fill in each row. Leave Category blank to auto-detect from the merchant name.');
+  var p=mkEl('p','color:#7a7a8a;font-size:.85rem;margin-bottom:20px;','Fill in each row. Leave Category blank to auto-detect from the merchant name. Enter a negative amount (e.g. -1500.00) for payments, credits, or your previous statement balance.');
 
   var scroll=mkEl('div','overflow-x:auto;max-height:50vh;overflow-y:auto;');
   var table=mkEl('table','width:100%;border-collapse:collapse;');
@@ -673,7 +684,7 @@ function showManualEntryModal(append){
 
     var td3=mkEl('td',tdSty);
     var inpAmount=mkEl('input',inpSty+'min-width:90px;');
-    inpAmount.type='text'; inpAmount.placeholder='0.00';
+    inpAmount.type='text'; inpAmount.placeholder='0.00 or -0.00';
     if(prefill&&prefill.amount) inpAmount.value=prefill.amount;
     td3.appendChild(inpAmount);
 
@@ -714,7 +725,7 @@ function showManualEntryModal(append){
       var merchant=inputs[1].value.trim();
       var amount=parseFloat(inputs[2].value.replace(/[^\d.-]/g,''));
       var cat=sel.value;
-      if(!merchant||isNaN(amount)||amount<=0) return;
+      if(!merchant||isNaN(amount)||amount===0) return;
       newRows.push({
         merchant:normalizeMerchant(merchant),
         merchantRaw:merchant,
@@ -793,38 +804,46 @@ function renderDashboard(){
     return{name:name,total:catMap[name].reduce(function(s,i){return s+i.amount;},0),items:catMap[name]};
   }).sort(function(a,b){return b.total-a.total;});
 
-  document.getElementById('s-total').textContent=fmt(total);
+  var absTotal=cats.reduce(function(s,c){return s+Math.abs(c.total);},0);
+  document.getElementById('s-total').textContent=(total<0?'-':'')+fmt(Math.abs(total));
   document.getElementById('s-count').textContent=parsedData.length;
   document.getElementById('s-cats').textContent=cats.length;
   document.getElementById('dashboard').classList.add('visible');
-  drawPie(cats,total);
-  drawLegend(cats,total);
+  drawPie(cats,total,absTotal);
+  drawLegend(cats,total,absTotal);
   clearActive();
 }
 
-function drawPie(cats,total){
+function drawPie(cats,total,absTotal){
   var svg=document.getElementById('pie-svg');
-  svg.innerHTML=''; svg._cats=cats; svg._total=total;
+  svg.innerHTML=''; svg._cats=cats; svg._total=total; svg._absTotal=absTotal;
   var a=-Math.PI/2;
   cats.forEach(function(cat,i){
-    var ang=cat.total/total*2*Math.PI, ea=a+ang, col=PALETTE[i%PALETTE.length];
+    var mag=Math.abs(cat.total);
+    var ang=absTotal>0?(mag/absTotal*2*Math.PI):0, ea=a+ang, col=PALETTE[i%PALETTE.length];
     var d='M 0 0 L '+Math.cos(a)+' '+Math.sin(a)+' A 1 1 0 '+(ang>Math.PI?1:0)+' 1 '+Math.cos(ea)+' '+Math.sin(ea)+' Z';
     var path=document.createElementNS('http://www.w3.org/2000/svg','path');
     path.setAttribute('d',d); path.setAttribute('fill',col); path.setAttribute('class','slice');
+    if(cat.total<0){
+      path.setAttribute('stroke-dasharray','0.04 0.03');
+      path.setAttribute('stroke',col);
+      path.setAttribute('stroke-width','0.008');
+      path.setAttribute('fill-opacity','0.45');
+    }
     path.addEventListener('click',(function(idx){return function(){selectSlice(idx);};})(i));
     svg.appendChild(path); a=ea;
   });
 }
 
-function drawLegend(cats,total){
+function drawLegend(cats,total,absTotal){
   var leg=document.getElementById('legend'); leg.innerHTML='';
   cats.forEach(function(cat,i){
-    var col=PALETTE[i%PALETTE.length], pct=(cat.total/total*100).toFixed(1);
+    var col=PALETTE[i%PALETTE.length], pct=(absTotal>0?Math.abs(cat.total)/absTotal*100:0).toFixed(1);
     var item=mkEl('div','');
     item.className='legend-item';
     var dot=mkEl('div','background:'+col+';'); dot.className='legend-dot';
     var name=mkEl('span',''); name.className='legend-name'; name.textContent=cat.name;
-    var amt=mkEl('span',''); amt.className='legend-amt'; amt.textContent=fmt(cat.total);
+    var amt=mkEl('span',''); amt.className='legend-amt'; amt.textContent=(cat.total<0?'-':'')+fmt(Math.abs(cat.total));
     var p=mkEl('span',''); p.className='legend-pct'; p.textContent=pct+'%';
     ap(item,dot,name,amt,p);
     item.addEventListener('click',(function(idx){return function(){selectSlice(idx);};})(i));
@@ -834,8 +853,8 @@ function drawLegend(cats,total){
 
 function selectSlice(i){
   var svg=document.getElementById('pie-svg');
-  var cats=svg._cats, tot=svg._total, cat=cats[i], col=PALETTE[i%PALETTE.length];
-  var pct=(cat.total/tot*100).toFixed(1);
+  var cats=svg._cats, tot=svg._total, absTot=svg._absTotal, cat=cats[i], col=PALETTE[i%PALETTE.length];
+  var pct=(absTot>0?Math.abs(cat.total)/absTot*100:0).toFixed(1);
   if(activeSlice===i){clearActive();return;}
   activeSlice=i;
   svg.querySelectorAll('.slice').forEach(function(p){p.classList.remove('active');});
@@ -845,7 +864,7 @@ function selectSlice(i){
   document.getElementById('center-pct').textContent=pct+'%';
   document.getElementById('center-cat').textContent=cat.name;
   document.getElementById('detail-panel').classList.add('visible');
-  document.getElementById('detail-title').innerHTML='<span style="color:'+col+'">&#9679;</span> '+esc(cat.name)+' &mdash; '+fmt(cat.total);
+  document.getElementById('detail-title').innerHTML='<span style="color:'+col+'">&#9679;</span> '+esc(cat.name)+' &mdash; '+(cat.total<0?'-':'')+fmt(Math.abs(cat.total));
   document.getElementById('detail-tbody').innerHTML=cat.items.slice()
     .sort(function(a,b){var da=new Date(a.date||0),db=new Date(b.date||0);return db-da||b.amount-a.amount;})
     .map(function(r){
@@ -916,21 +935,23 @@ function saveView(){
       +'.badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:.75rem;font-weight:500}'
       +'.saved-note{text-align:center;color:var(--muted);font-size:.8rem;margin-top:24px}';
 
-    var js='var P='+JSON.stringify(PALETTE)+',cats='+JSON.stringify(cats)+',tot='+JSON.stringify(tot)+',act=null;'
+    var js='var P='+JSON.stringify(PALETTE)+',cats='+JSON.stringify(cats)+',tot='+JSON.stringify(tot)+',absTot='+JSON.stringify(cats.reduce(function(s,c){return s+Math.abs(c.total);},0))+',act=null;'
       +'function fmt(n){return n.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});}'
+      +'function sfmt(n){return (n<0?"-":"")+fmt(Math.abs(n));}'
       +'function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}'
       +'function drawPie(){var svg=document.getElementById("pie-svg");svg.innerHTML="";var a=-Math.PI/2;'
-      +'cats.forEach(function(cat,i){var ang=cat.total/tot*2*Math.PI,ea=a+ang,col=P[i%P.length];'
+      +'cats.forEach(function(cat,i){var mag=Math.abs(cat.total),ang=absTot>0?(mag/absTot*2*Math.PI):0,ea=a+ang,col=P[i%P.length];'
       +'var d="M 0 0 L "+Math.cos(a)+" "+Math.sin(a)+" A 1 1 0 "+(ang>Math.PI?1:0)+" 1 "+Math.cos(ea)+" "+Math.sin(ea)+" Z";'
       +'var p=document.createElementNS("http://www.w3.org/2000/svg","path");'
       +'p.setAttribute("d",d);p.setAttribute("fill",col);p.setAttribute("class","slice");'
+      +'if(cat.total<0){p.setAttribute("fill-opacity","0.45");}'
       +'p.addEventListener("click",(function(idx){return function(){sel(idx);};})(i));svg.appendChild(p);a=ea;});}'
       +'function drawLeg(){var leg=document.getElementById("legend");leg.innerHTML="";'
-      +'cats.forEach(function(cat,i){var col=P[i%P.length],pct=(cat.total/tot*100).toFixed(1);'
+      +'cats.forEach(function(cat,i){var col=P[i%P.length],pct=(absTot>0?Math.abs(cat.total)/absTot*100:0).toFixed(1);'
       +'var item=document.createElement("div");item.className="legend-item";'
-      +'item.innerHTML="<div class=\\"legend-dot\\" style=\\"background:"+col+"\\"></div><span class=\\"legend-name\\">"+esc(cat.name)+"</span><span class=\\"legend-amt\\">"+fmt(cat.total)+"</span><span class=\\"legend-pct\\">"+pct+"%</span>";'
+      +'item.innerHTML="<div class=\\"legend-dot\\" style=\\"background:"+col+"\\"></div><span class=\\"legend-name\\">"+esc(cat.name)+"</span><span class=\\"legend-amt\\">"+sfmt(cat.total)+"</span><span class=\\"legend-pct\\">"+pct+"%</span>";'
       +'item.addEventListener("click",(function(idx){return function(){sel(idx);};})(i));leg.appendChild(item);});}'
-      +'function sel(i){var cat=cats[i],col=P[i%P.length],pct=(cat.total/tot*100).toFixed(1);'
+      +'function sel(i){var cat=cats[i],col=P[i%P.length],pct=(absTot>0?Math.abs(cat.total)/absTot*100:0).toFixed(1);'
       +'if(act===i){clr();return;}act=i;'
       +'document.querySelectorAll(".slice").forEach(function(p){p.classList.remove("active");});'
       +'document.querySelectorAll(".slice")[i].classList.add("active");'
@@ -939,7 +960,7 @@ function saveView(){
       +'document.getElementById("center-pct").textContent=pct+"%";'
       +'document.getElementById("center-cat").textContent=cat.name;'
       +'document.getElementById("detail-panel").classList.add("visible");'
-      +'document.getElementById("detail-title").innerHTML="<span style=\\"color:"+col+"\\">&#9679;</span> "+esc(cat.name)+" &mdash; "+fmt(cat.total);'
+      +'document.getElementById("detail-title").innerHTML="<span style=\\"color:"+col+"\\">&#9679;</span> "+esc(cat.name)+" &mdash; "+sfmt(cat.total);'
       +'document.getElementById("detail-tbody").innerHTML=cat.items.slice()'
       +'.sort(function(a,b){var da=new Date(a.date||0),db=new Date(b.date||0);return db-da||b.amount-a.amount;})'
       +'.map(function(r){return "<tr><td>"+esc(r.date||"&mdash;")+"</td><td>"+esc(r.merchantRaw||r.merchant)+"</td>"'
@@ -960,7 +981,7 @@ function saveView(){
       '<header><h1>Expense Report</h1><p>Saved on '+sDate+'</p></header>',
       '<div class="dashboard">',
       '<div class="summary-grid card">',
-      '<div class="stat"><div class="label">Total Spent</div><div class="value">'+sTotal+'</div></div>',
+      '<div class="stat"><div class="label">Net Total</div><div class="value">'+sTotal+'</div></div>',
       '<div class="stat"><div class="label">Transactions</div><div class="value">'+sCount+'</div></div>',
       '<div class="stat"><div class="label">Categories</div><div class="value">'+sCats+'</div></div>',
       '</div>',
